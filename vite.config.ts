@@ -26,7 +26,18 @@ export default defineConfig(({ mode }) => {
       }
     },
     build: {
-      outDir: 'dist'
+      outDir: 'dist',
+      // Code splitting to reduce bundle size
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'react-vendor': ['react', 'react-dom'],
+            'charts': ['recharts'],
+            'supabase': ['@supabase/supabase-js']
+          }
+        }
+      },
+      chunkSizeWarningLimit: 600
     }
   };
 });
