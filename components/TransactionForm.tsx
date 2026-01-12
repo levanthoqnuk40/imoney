@@ -85,9 +85,9 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center modal-overlay">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md overflow-hidden modal-content modal-fullscreen-mobile sm:max-h-[90vh]">
-        {/* Header */}
-        <div className="p-4 sm:p-6 border-b border-gray-100 flex justify-between items-center sticky top-0 bg-white z-10">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md max-h-[90vh] flex flex-col modal-content modal-fullscreen-mobile">
+        {/* Header - Fixed */}
+        <div className="p-4 sm:p-6 border-b border-gray-100 flex justify-between items-center flex-shrink-0">
           <h2 className="text-lg sm:text-xl font-bold text-gray-800">Thêm Giao Dịch Mới</h2>
           <button
             onClick={onClose}
@@ -100,7 +100,8 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4 overflow-y-auto">
+        {/* Scrollable Form Content */}
+        <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
           {/* Type Toggle */}
           <div className="flex bg-gray-100 p-1 rounded-xl">
             <button
