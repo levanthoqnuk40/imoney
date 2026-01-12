@@ -5,12 +5,18 @@ import StatsCard from './components/StatsCard';
 import TransactionForm from './components/TransactionForm';
 import Dashboard from './components/Dashboard';
 import BudgetModal from './components/BudgetModal';
+import LoginScreen from './components/LoginScreen';
 import { getFinancialAdvice } from './services/geminiService';
 import { supabase } from './services/supabase.service';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
 import { COLORS } from './constants';
+import { User } from '@supabase/supabase-js';
 
 const App: React.FC = () => {
+  // Auth state
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -23,6 +29,28 @@ const App: React.FC = () => {
   const [aiAdvice, setAiAdvice] = useState<AIAdvice | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showTips, setShowTips] = useState(false);
+
+  // Check auth state on mount
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Handle logout
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setTransactions([]);
+  };
 
   // Load transactions from Supabase
   const loadTransactions = useCallback(async () => {
@@ -56,10 +84,12 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Initial load
+  // Load transactions when user is authenticated
   useEffect(() => {
-    loadTransactions();
-  }, [loadTransactions]);
+    if (user) {
+      loadTransactions();
+    }
+  }, [user, loadTransactions]);
 
   // Keep localStorage as backup
   useEffect(() => {
@@ -172,6 +202,25 @@ const App: React.FC = () => {
     setBudgets(newBudgets);
   };
 
+  // Show loading while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <span className="text-white font-bold text-2xl">F</span>
+          </div>
+          <p className="text-gray-500">Đang tải...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login screen if not authenticated
+  if (!user) {
+    return <LoginScreen onLoginSuccess={() => loadTransactions()} />;
+  }
+
   return (
     <div className="min-h-screen safe-bottom">
       {/* Header */}
@@ -187,16 +236,48 @@ const App: React.FC = () => {
                 FinVise
               </h1>
             </div>
-            <button
-              onClick={handleGetAiAdvice}
-              disabled={isAiLoading || transactions.length === 0}
-              className="flex items-center space-x-1 sm:space-x-2 text-sm font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50 p-2 -mr-2 touch-target"
-            >
-              <svg className={`w-5 h-5 ${isAiLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-              </svg>
-              <span className="hidden sm:inline">{isAiLoading ? 'Đang phân tích...' : 'Phân tích AI'}</span>
-            </button>
+
+            <div className="flex items-center space-x-2 sm:space-x-4">
+              <button
+                onClick={handleGetAiAdvice}
+                disabled={isAiLoading || transactions.length === 0}
+                className="flex items-center space-x-1 sm:space-x-2 text-sm font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50 p-2 touch-target"
+              >
+                <svg className={`w-5 h-5 ${isAiLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+                <span className="hidden sm:inline">{isAiLoading ? 'Đang phân tích...' : 'Phân tích AI'}</span>
+              </button>
+
+              {/* User Menu */}
+              <div className="relative group">
+                <button className="flex items-center space-x-2 p-2 rounded-xl hover:bg-gray-100 transition-colors">
+                  <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                    {user.email?.[0].toUpperCase() || 'U'}
+                  </div>
+                  <svg className="w-4 h-4 text-gray-400 hidden sm:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {/* Dropdown */}
+                <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-lg border border-gray-100 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                  <div className="p-3 border-b border-gray-100">
+                    <p className="text-sm font-medium text-gray-900 truncate">{user.user_metadata?.full_name || 'Người dùng'}</p>
+                    <p className="text-xs text-gray-500 truncate">{user.email}</p>
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full px-3 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 transition-colors flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    Đăng xuất
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Tab Navigation - Desktop */}
