@@ -136,9 +136,14 @@ const App: React.FC = () => {
   }, [transactions]);
 
   const handleAddTransaction = async (newTx: Omit<Transaction, 'id'>) => {
-    if (!user) return;
+    if (!user) {
+      alert('Vui lòng đăng nhập để thêm giao dịch');
+      return;
+    }
 
     try {
+      console.log('Adding transaction for user:', user.id);
+
       // Insert to Supabase with user_id
       const { data, error } = await supabase
         .from('transactions')
@@ -155,7 +160,13 @@ const App: React.FC = () => {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase error:', error);
+        alert('Lỗi lưu giao dịch: ' + error.message);
+        throw error;
+      }
+
+      console.log('Transaction saved:', data);
 
       // Add to local state
       const tx: Transaction = {
@@ -168,7 +179,7 @@ const App: React.FC = () => {
         receipt_url: data.receipt_url || undefined
       };
       setTransactions([tx, ...transactions]);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error adding transaction:', error);
       // Fallback: add locally with secure random ID
       const tx: Transaction = {
