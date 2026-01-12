@@ -133,6 +133,11 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
               className="w-full px-4 py-3 sm:py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-base"
               placeholder="0"
             />
+            {amount && parseFloat(amount) > 0 && (
+              <p className="mt-1 text-sm text-gray-500">
+                = <span className="font-medium text-gray-700">{parseFloat(amount).toLocaleString('vi-VN')}</span> VND
+              </p>
+            )}
           </div>
 
           {/* Category */}
