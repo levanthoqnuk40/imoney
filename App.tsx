@@ -136,11 +136,14 @@ const App: React.FC = () => {
   }, [transactions]);
 
   const handleAddTransaction = async (newTx: Omit<Transaction, 'id'>) => {
+    if (!user) return;
+
     try {
-      // Insert to Supabase
+      // Insert to Supabase with user_id
       const { data, error } = await supabase
         .from('transactions')
         .insert([{
+          user_id: user.id, // Required for RLS
           type: newTx.type === 'INCOME' ? 'income' : 'expense',
           amount: newTx.amount,
           category: newTx.category,
