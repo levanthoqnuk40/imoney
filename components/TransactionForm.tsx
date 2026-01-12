@@ -22,9 +22,27 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
+  // Allowed file types and max size for receipt uploads
+  const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Validate file type
+      if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+        alert('Chỉ chấp nhận file ảnh (JPEG, PNG, WebP, HEIC)');
+        e.target.value = '';
+        return;
+      }
+
+      // Validate file size
+      if (file.size > MAX_FILE_SIZE) {
+        alert('File quá lớn. Tối đa 5MB');
+        e.target.value = '';
+        return;
+      }
+
       setReceiptFile(file);
       const preview = await StorageService.fileToBase64(file);
       setReceiptPreview(preview);

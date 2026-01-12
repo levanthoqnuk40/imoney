@@ -52,12 +52,15 @@ const App: React.FC = () => {
     setTransactions([]);
   };
 
-  // Load transactions from Supabase
+  // Load transactions from Supabase - filtered by user_id for security
   const loadTransactions = useCallback(async () => {
+    if (!user) return;
+
     try {
       const { data, error } = await supabase
         .from('transactions')
         .select('*')
+        .eq('user_id', user.id) // Security: Only load current user's transactions
         .order('transaction_date', { ascending: false });
 
       if (error) throw error;
@@ -76,13 +79,12 @@ const App: React.FC = () => {
       setTransactions(mappedTransactions);
     } catch (error) {
       console.error('Error loading transactions:', error);
-      // Fallback to localStorage if Supabase fails
-      const saved = localStorage.getItem('finvise_transactions');
-      if (saved) setTransactions(JSON.parse(saved));
+      // Show empty state on error - don't fallback to localStorage (security)
+      setTransactions([]);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [user]);
 
   // Load transactions when user is authenticated
   useEffect(() => {
@@ -165,29 +167,32 @@ const App: React.FC = () => {
       setTransactions([tx, ...transactions]);
     } catch (error) {
       console.error('Error adding transaction:', error);
-      // Fallback: add locally with random ID
+      // Fallback: add locally with secure random ID
       const tx: Transaction = {
         ...newTx,
-        id: Math.random().toString(36).substr(2, 9)
+        id: crypto.randomUUID()
       };
       setTransactions([tx, ...transactions]);
     }
   };
 
   const handleDeleteTransaction = async (id: string) => {
+    if (!user) return;
+
     try {
-      // Delete from Supabase
+      // Delete from Supabase - verify user owns the transaction
       const { error } = await supabase
         .from('transactions')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('user_id', user.id); // Security: Only delete if user owns it
 
       if (error) throw error;
+      // Only update local state on success
+      setTransactions(transactions.filter(t => t.id !== id));
     } catch (error) {
       console.error('Error deleting transaction:', error);
     }
-    // Always update local state
-    setTransactions(transactions.filter(t => t.id !== id));
   };
 
   const handleGetAiAdvice = async () => {

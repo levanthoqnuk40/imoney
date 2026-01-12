@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Budget } from '../types';
-import { EXPENSE_CATEGORIES } from '../constants';
+import { EXPENSE_CATEGORIES, CATEGORY_ICONS } from '../constants';
 
 interface BudgetModalProps {
     budgets: Budget[];
@@ -9,16 +9,7 @@ interface BudgetModalProps {
     onClose: () => void;
 }
 
-const CATEGORY_ICONS: Record<string, string> = {
-    'Ăn uống': '🍜',
-    'Di chuyển': '🚗',
-    'Nhà ở': '🏠',
-    'Giải trí': '🎮',
-    'Mua sắm': '🛒',
-    'Sức khỏe': '💊',
-    'Giáo dục': '📚',
-    'Khác': '📦',
-};
+// CATEGORY_ICONS is now imported from constants.tsx
 
 const BudgetModal: React.FC<BudgetModalProps> = ({ budgets, onSave, onClose }) => {
     const [localBudgets, setLocalBudgets] = useState<Record<string, string>>(() => {
@@ -38,12 +29,12 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ budgets, onSave, onClose }) =
 
     const handleSubmit = () => {
         const newBudgets: Budget[] = [];
-        Object.entries(localBudgets).forEach(([category, limitStr]) => {
+        Object.entries(localBudgets).forEach(([category, limitStr]: [string, string]) => {
             const limit = parseFloat(limitStr);
             if (limit > 0) {
                 const existing = budgets.find(b => b.category === category);
                 newBudgets.push({
-                    id: existing?.id || Math.random().toString(36).substr(2, 9),
+                    id: existing?.id || crypto.randomUUID(),
                     category,
                     limit,
                     period: 'monthly'

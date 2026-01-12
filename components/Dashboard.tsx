@@ -1,7 +1,7 @@
 
 import React, { useMemo } from 'react';
 import { Transaction, Budget } from '../types';
-import { EXPENSE_CATEGORIES, COLORS } from '../constants';
+import { EXPENSE_CATEGORIES, COLORS, CATEGORY_ICONS } from '../constants';
 import BudgetCard from './BudgetCard';
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, AreaChart, Area } from 'recharts';
 
@@ -11,17 +11,7 @@ interface DashboardProps {
     onEditBudget: () => void;
 }
 
-// Category icons mapping
-const CATEGORY_ICONS: Record<string, string> = {
-    'Ăn uống': '🍜',
-    'Di chuyển': '🚗',
-    'Nhà ở': '🏠',
-    'Giải trí': '🎮',
-    'Mua sắm': '🛒',
-    'Sức khỏe': '💊',
-    'Giáo dục': '📚',
-    'Khác': '📦',
-};
+// CATEGORY_ICONS is now imported from constants.tsx
 
 const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudget }) => {
     // Get current month transactions
@@ -74,7 +64,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
     // Category breakdown for pie chart
     const pieData = useMemo(() => {
         return Object.entries(categorySpending)
-            .map(([name, value]) => ({ name, value }))
+            .map(([name, value]: [string, number]) => ({ name, value }))
             .sort((a, b) => b.value - a.value);
     }, [categorySpending]);
 

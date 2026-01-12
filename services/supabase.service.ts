@@ -1,11 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Supabase Configuration
-const supabaseUrl = 'https://jajiwnantexqfmjpdxiw.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imphaml3bmFudGV4cWZtanBkeGl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgyMjg1ODUsImV4cCI6MjA4MzgwNDU4NX0.x-wiKahaQamxq3BOy8RO9a1Nsv90YkbEbueI_-kHgpE';
+// Supabase Configuration - using environment variables for security
+// IMPORTANT: Never hardcode credentials in source code
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Validate environment variables
+if (!supabaseUrl || !supabaseAnonKey) {
+    console.error('Missing Supabase environment variables. Please check your .env.local file.');
+}
 
 // Create Supabase client with explicit public schema
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
     db: {
         schema: 'public'
     }
