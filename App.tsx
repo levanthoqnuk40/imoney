@@ -6,6 +6,7 @@ import TransactionForm from './components/TransactionForm';
 import Dashboard from './components/Dashboard';
 import BudgetModal from './components/BudgetModal';
 import LoginScreen from './components/LoginScreen';
+import TransactionDetail from './components/TransactionDetail';
 import { getFinancialAdvice } from './services/geminiService';
 import { supabase } from './services/supabase.service';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
@@ -26,6 +27,7 @@ const App: React.FC = () => {
   });
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [aiAdvice, setAiAdvice] = useState<AIAdvice | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showTips, setShowTips] = useState(false);
@@ -442,7 +444,11 @@ const App: React.FC = () => {
                   <div className="divide-y divide-gray-50">
                     {transactions.length > 0 ? (
                       transactions.map(tx => (
-                        <div key={tx.id} className="transaction-item group">
+                        <div
+                          key={tx.id}
+                          className="transaction-item group cursor-pointer hover:bg-gray-50"
+                          onClick={() => setSelectedTransaction(tx)}
+                        >
                           <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
                             <div className={`w-10 h-10 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg ${tx.type === 'INCOME' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
                               }`}>
@@ -459,7 +465,7 @@ const App: React.FC = () => {
                               {tx.type === 'INCOME' ? '+' : '-'}{tx.amount.toLocaleString('vi-VN')}
                             </p>
                             <button
-                              onClick={() => handleDeleteTransaction(tx.id)}
+                              onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
                               className="transaction-delete-btn text-gray-300 hover:text-rose-500 transition-all touch-target flex items-center justify-center"
                               aria-label="Xóa giao dịch"
                             >
@@ -584,6 +590,15 @@ const App: React.FC = () => {
           budgets={budgets}
           onSave={handleSaveBudgets}
           onClose={() => setIsBudgetModalOpen(false)}
+        />
+      )}
+
+      {/* Transaction Detail Modal */}
+      {selectedTransaction && (
+        <TransactionDetail
+          transaction={selectedTransaction}
+          onClose={() => setSelectedTransaction(null)}
+          onDelete={handleDeleteTransaction}
         />
       )}
     </div>
