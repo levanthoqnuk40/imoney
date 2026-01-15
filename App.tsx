@@ -1069,44 +1069,57 @@ const App: React.FC = () => {
         <div className="flex items-center justify-around py-2" style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' }}>
           <button
             onClick={() => setCurrentView('dashboard')}
-            className={`flex flex-col items-center justify-center py-2 px-3 min-w-[56px] ${currentView === 'dashboard' ? 'text-blue-600' : 'text-gray-400'
+            className={`flex flex-col items-center justify-center py-1.5 px-2 min-w-[48px] ${currentView === 'dashboard' ? 'text-blue-600' : 'text-gray-400'
               }`}
           >
-            <svg className="w-6 h-6 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
             </svg>
-            <span className="text-xs font-medium">Tổng quan</span>
+            <span className="text-[10px] font-medium">Tổng quan</span>
           </button>
 
           <button
             onClick={() => setCurrentView('transactions')}
-            className={`flex flex-col items-center justify-center py-2 px-3 min-w-[56px] ${currentView === 'transactions' ? 'text-blue-600' : 'text-gray-400'
+            className={`flex flex-col items-center justify-center py-1.5 px-2 min-w-[48px] ${currentView === 'transactions' ? 'text-blue-600' : 'text-gray-400'
               }`}
           >
-            <svg className="w-6 h-6 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
             </svg>
-            <span className="text-xs font-medium">Giao dịch</span>
+            <span className="text-[10px] font-medium">Giao dịch</span>
           </button>
 
           <button
-            onClick={() => currentView === 'debts' ? setIsDebtFormOpen(true) : setIsFormOpen(true)}
-            className="flex items-center justify-center w-14 h-14 bg-blue-600 rounded-full shadow-lg -mt-6 text-white active:scale-95 transition-transform"
+            onClick={() => {
+              if (currentView === 'debts') setIsDebtFormOpen(true);
+              else if (currentView === 'gifts') setIsGiftFormOpen(true);
+              else setIsFormOpen(true);
+            }}
+            className="flex items-center justify-center w-12 h-12 bg-blue-600 rounded-full shadow-lg -mt-5 text-white active:scale-95 transition-transform"
           >
-            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path>
             </svg>
           </button>
 
           <button
             onClick={() => setCurrentView('debts')}
-            className={`flex flex-col items-center justify-center py-2 px-3 min-w-[56px] ${currentView === 'debts' ? 'text-blue-600' : 'text-gray-400'
+            className={`flex flex-col items-center justify-center py-1.5 px-2 min-w-[48px] ${currentView === 'debts' ? 'text-blue-600' : 'text-gray-400'
               }`}
           >
-            <svg className="w-6 h-6 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
             </svg>
-            <span className="text-xs font-medium">Dư nợ</span>
+            <span className="text-[10px] font-medium">Dư nợ</span>
+          </button>
+
+          <button
+            onClick={() => setCurrentView('gifts')}
+            className={`flex flex-col items-center justify-center py-1.5 px-2 min-w-[48px] ${currentView === 'gifts' ? 'text-blue-600' : 'text-gray-400'
+              }`}
+          >
+            <span className="text-lg mb-0.5">🎁</span>
+            <span className="text-[10px] font-medium">Ghi nhớ</span>
           </button>
         </div>
       </div>
