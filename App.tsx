@@ -1,16 +1,22 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Transaction, AIAdvice, Budget, ViewType } from './types';
+import { Transaction, AIAdvice, Budget, ViewType, Debt, DebtType, GiftRecord, GiftDirection, GiftEventType } from './types';
 import StatsCard from './components/StatsCard';
 import TransactionForm from './components/TransactionForm';
 import Dashboard from './components/Dashboard';
 import BudgetModal from './components/BudgetModal';
 import LoginScreen from './components/LoginScreen';
 import TransactionDetail from './components/TransactionDetail';
+import DebtCard from './components/DebtCard';
+import DebtForm from './components/DebtForm';
+import DebtDetail from './components/DebtDetail';
+import GiftCard from './components/GiftCard';
+import GiftForm from './components/GiftForm';
+import GiftDetail from './components/GiftDetail';
 import { getFinancialAdvice } from './services/geminiService';
 import { supabase } from './services/supabase.service';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
-import { COLORS } from './constants';
+import { COLORS, GIFT_EVENT_TYPES } from './constants';
 import { User } from '@supabase/supabase-js';
 
 const App: React.FC = () => {
@@ -31,6 +37,18 @@ const App: React.FC = () => {
   const [aiAdvice, setAiAdvice] = useState<AIAdvice | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showTips, setShowTips] = useState(false);
+
+  // Debt management state
+  const [debts, setDebts] = useState<Debt[]>([]);
+  const [isDebtFormOpen, setIsDebtFormOpen] = useState(false);
+  const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
+  const [debtFilter, setDebtFilter] = useState<'all' | 'receivable' | 'payable'>('all');
+
+  // Gift money tracking state
+  const [gifts, setGifts] = useState<GiftRecord[]>([]);
+  const [isGiftFormOpen, setIsGiftFormOpen] = useState(false);
+  const [selectedGift, setSelectedGift] = useState<GiftRecord | null>(null);
+  const [giftFilter, setGiftFilter] = useState<'all' | GiftEventType>('all');
 
   // Check auth state on mount
   useEffect(() => {
@@ -223,6 +241,239 @@ const App: React.FC = () => {
     setBudgets(newBudgets);
   };
 
+  // ============================================
+  // DEBT MANAGEMENT FUNCTIONS
+  // ============================================
+
+  // Load debts from Supabase
+  const loadDebts = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('debts')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const mappedDebts: Debt[] = (data || []).map(d => ({
+        id: d.id,
+        user_id: d.user_id,
+        type: d.type as 'receivable' | 'payable',
+        person_name: d.person_name,
+        original_amount: parseFloat(d.original_amount),
+        paid_amount: parseFloat(d.paid_amount || 0),
+        remaining_amount: parseFloat(d.original_amount) - parseFloat(d.paid_amount || 0),
+        created_date: d.created_date,
+        due_date: d.due_date || undefined,
+        description: d.description || undefined,
+        status: d.status as 'pending' | 'partial' | 'completed'
+      }));
+
+      setDebts(mappedDebts);
+    } catch (error) {
+      console.error('Error loading debts:', error);
+      setDebts([]);
+    }
+  }, [user]);
+
+  // Load debts when user is authenticated
+  useEffect(() => {
+    if (user) {
+      loadDebts();
+    }
+  }, [user, loadDebts]);
+
+  // Add new debt
+  const handleAddDebt = async (newDebt: {
+    type: DebtType;
+    person_name: string;
+    original_amount: number;
+    created_date: string;
+    due_date?: string;
+    description?: string;
+  }) => {
+    if (!user) {
+      alert('Vui lòng đăng nhập để thêm khoản nợ');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('debts')
+        .insert([{
+          user_id: user.id,
+          type: newDebt.type,
+          person_name: newDebt.person_name,
+          original_amount: newDebt.original_amount,
+          created_date: newDebt.created_date,
+          due_date: newDebt.due_date || null,
+          description: newDebt.description || null,
+          status: 'pending'
+        }]);
+
+      if (error) throw error;
+
+      // Reload debts to get fresh data
+      await loadDebts();
+      setIsDebtFormOpen(false);
+    } catch (error) {
+      console.error('Error adding debt:', error);
+      alert('Có lỗi khi thêm khoản nợ');
+    }
+  };
+
+  // Delete debt
+  const handleDeleteDebt = async (id: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('debts')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+      setDebts(debts.filter(d => d.id !== id));
+    } catch (error) {
+      console.error('Error deleting debt:', error);
+    }
+  };
+
+  // Filter debts
+  const filteredDebts = useMemo(() => {
+    if (debtFilter === 'all') return debts;
+    return debts.filter(d => d.type === debtFilter);
+  }, [debts, debtFilter]);
+
+  // Debt summary stats
+  const debtStats = useMemo(() => {
+    const receivable = debts
+      .filter(d => d.type === 'receivable')
+      .reduce((sum, d) => sum + d.remaining_amount, 0);
+    const payable = debts
+      .filter(d => d.type === 'payable')
+      .reduce((sum, d) => sum + d.remaining_amount, 0);
+    return { receivable, payable, net: receivable - payable };
+  }, [debts]);
+
+  // ============================================
+  // GIFT MONEY TRACKING FUNCTIONS
+  // ============================================
+
+  // Load gifts from Supabase
+  const loadGifts = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('gift_records')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('event_date', { ascending: false });
+
+      if (error) throw error;
+
+      const mappedGifts: GiftRecord[] = (data || []).map(g => ({
+        id: g.id,
+        user_id: g.user_id,
+        direction: g.direction as GiftDirection,
+        person_name: g.person_name,
+        event_type: g.event_type as GiftEventType,
+        amount: parseFloat(g.amount),
+        event_date: g.event_date,
+        note: g.note || undefined
+      }));
+
+      setGifts(mappedGifts);
+    } catch (error) {
+      console.error('Error loading gifts:', error);
+      setGifts([]);
+    }
+  }, [user]);
+
+  // Load gifts when user is authenticated
+  useEffect(() => {
+    if (user) {
+      loadGifts();
+    }
+  }, [user, loadGifts]);
+
+  // Add new gift
+  const handleAddGift = async (newGift: {
+    direction: GiftDirection;
+    person_name: string;
+    event_type: GiftEventType;
+    amount: number;
+    event_date: string;
+    note?: string;
+  }) => {
+    if (!user) {
+      alert('Vui lòng đăng nhập');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('gift_records')
+        .insert([{
+          user_id: user.id,
+          direction: newGift.direction,
+          person_name: newGift.person_name,
+          event_type: newGift.event_type,
+          amount: newGift.amount,
+          event_date: newGift.event_date,
+          note: newGift.note || null
+        }]);
+
+      if (error) throw error;
+
+      await loadGifts();
+      setIsGiftFormOpen(false);
+    } catch (error) {
+      console.error('Error adding gift:', error);
+      alert('Có lỗi khi thêm ghi nhớ');
+    }
+  };
+
+  // Delete gift
+  const handleDeleteGift = async (id: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('gift_records')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+      setGifts(gifts.filter(g => g.id !== id));
+    } catch (error) {
+      console.error('Error deleting gift:', error);
+    }
+  };
+
+  // Filter gifts
+  const filteredGifts = useMemo(() => {
+    if (giftFilter === 'all') return gifts;
+    return gifts.filter(g => g.event_type === giftFilter);
+  }, [gifts, giftFilter]);
+
+  // Gift summary stats
+  const giftStats = useMemo(() => {
+    const given = gifts
+      .filter(g => g.direction === 'given')
+      .reduce((sum, g) => sum + g.amount, 0);
+    const received = gifts
+      .filter(g => g.direction === 'received')
+      .reduce((sum, g) => sum + g.amount, 0);
+    return { given, received, net: received - given };
+  }, [gifts]);
+
   // Show loading while checking auth
   if (authLoading) {
     return (
@@ -329,6 +580,41 @@ const App: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
                 Giao dịch
+              </span>
+            </button>
+            <button
+              onClick={() => setCurrentView('debts')}
+              className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${currentView === 'debts'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+            >
+              <span className="flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                </svg>
+                Dư nợ
+                {debts.length > 0 && (
+                  <span className="bg-blue-100 text-blue-600 text-xs px-1.5 py-0.5 rounded-full">
+                    {debts.length}
+                  </span>
+                )}
+              </span>
+            </button>
+            <button
+              onClick={() => setCurrentView('gifts')}
+              className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${currentView === 'gifts'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+            >
+              <span className="flex items-center gap-2">
+                🎁 Ghi nhớ
+                {gifts.length > 0 && (
+                  <span className="bg-blue-100 text-blue-600 text-xs px-1.5 py-0.5 rounded-full">
+                    {gifts.length}
+                  </span>
+                )}
               </span>
             </button>
           </div>
@@ -525,6 +811,244 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Debts View */}
+        {currentView === 'debts' && (
+          <div className="space-y-6">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+              <div className="card p-4 bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">📥</span>
+                  <p className="text-xs text-emerald-600 font-medium">Dư nợ có</p>
+                </div>
+                <p className="text-lg sm:text-xl font-bold text-emerald-700">
+                  +{debtStats.receivable.toLocaleString('vi-VN')}đ
+                </p>
+                <p className="text-xs text-emerald-500 mt-1">
+                  {debts.filter(d => d.type === 'receivable').length} khoản
+                </p>
+              </div>
+              <div className="card p-4 bg-gradient-to-br from-rose-50 to-rose-100 border-rose-200">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">📤</span>
+                  <p className="text-xs text-rose-600 font-medium">Dư nợ còn</p>
+                </div>
+                <p className="text-lg sm:text-xl font-bold text-rose-700">
+                  -{debtStats.payable.toLocaleString('vi-VN')}đ
+                </p>
+                <p className="text-xs text-rose-500 mt-1">
+                  {debts.filter(d => d.type === 'payable').length} khoản
+                </p>
+              </div>
+              <div className="card p-4 bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200 col-span-2 sm:col-span-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">💰</span>
+                  <p className="text-xs text-blue-600 font-medium">Công nợ ròng</p>
+                </div>
+                <p className={`text-lg sm:text-xl font-bold ${debtStats.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {debtStats.net >= 0 ? '+' : ''}{debtStats.net.toLocaleString('vi-VN')}đ
+                </p>
+              </div>
+            </div>
+
+            {/* Filter Buttons */}
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              <button
+                onClick={() => setDebtFilter('all')}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${debtFilter === 'all'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+              >
+                Tất cả ({debts.length})
+              </button>
+              <button
+                onClick={() => setDebtFilter('receivable')}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${debtFilter === 'receivable'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                  }`}
+              >
+                📥 Người khác nợ mình ({debts.filter(d => d.type === 'receivable').length})
+              </button>
+              <button
+                onClick={() => setDebtFilter('payable')}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${debtFilter === 'payable'
+                  ? 'bg-rose-600 text-white'
+                  : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+                  }`}
+              >
+                📤 Mình nợ người khác ({debts.filter(d => d.type === 'payable').length})
+              </button>
+            </div>
+
+            {/* Debt List */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base sm:text-lg font-bold text-gray-800">
+                  Danh sách khoản nợ
+                </h3>
+                <button
+                  onClick={() => setIsDebtFormOpen(true)}
+                  className="flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Thêm mới
+                </button>
+              </div>
+
+              {filteredDebts.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredDebts.map(debt => (
+                    <DebtCard
+                      key={debt.id}
+                      debt={debt}
+                      onClick={() => setSelectedDebt(debt)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="card p-8 text-center">
+                  <div className="text-4xl mb-3">💳</div>
+                  <p className="text-gray-600 mb-2">
+                    {debtFilter === 'all'
+                      ? 'Chưa có khoản nợ nào'
+                      : debtFilter === 'receivable'
+                        ? 'Chưa có ai nợ bạn'
+                        : 'Bạn chưa nợ ai'
+                    }
+                  </p>
+                  <button
+                    onClick={() => setIsDebtFormOpen(true)}
+                    className="text-blue-600 font-medium hover:text-blue-700"
+                  >
+                    Thêm khoản nợ ngay
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Gifts View */}
+        {currentView === 'gifts' && (
+          <div className="space-y-6">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+              <div className="card p-4 bg-gradient-to-br from-rose-50 to-rose-100 border-rose-200">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">📤</span>
+                  <p className="text-xs text-rose-600 font-medium">Tiền đưa</p>
+                </div>
+                <p className="text-lg sm:text-xl font-bold text-rose-700">
+                  -{giftStats.given.toLocaleString('vi-VN')}đ
+                </p>
+                <p className="text-xs text-rose-500 mt-1">
+                  {gifts.filter(g => g.direction === 'given').length} lần
+                </p>
+              </div>
+              <div className="card p-4 bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">📥</span>
+                  <p className="text-xs text-emerald-600 font-medium">Tiền nhận</p>
+                </div>
+                <p className="text-lg sm:text-xl font-bold text-emerald-700">
+                  +{giftStats.received.toLocaleString('vi-VN')}đ
+                </p>
+                <p className="text-xs text-emerald-500 mt-1">
+                  {gifts.filter(g => g.direction === 'received').length} lần
+                </p>
+              </div>
+              <div className={`card p-4 bg-gradient-to-br ${giftStats.net >= 0 ? 'from-emerald-50 to-emerald-100 border-emerald-200' : 'from-rose-50 to-rose-100 border-rose-200'} col-span-2 sm:col-span-1`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">📊</span>
+                  <p className="text-xs text-gray-600 font-medium">Chênh lệch</p>
+                </div>
+                <p className={`text-lg sm:text-xl font-bold ${giftStats.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {giftStats.net >= 0 ? '+' : ''}{giftStats.net.toLocaleString('vi-VN')}đ
+                </p>
+              </div>
+            </div>
+
+            {/* Filter by Event Type */}
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              <button
+                onClick={() => setGiftFilter('all')}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${giftFilter === 'all'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+              >
+                Tất cả ({gifts.length})
+              </button>
+              {Object.entries(GIFT_EVENT_TYPES).map(([key, { label, icon }]) => {
+                const count = gifts.filter(g => g.event_type === key).length;
+                if (count === 0 && giftFilter !== key) return null;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setGiftFilter(key as GiftEventType)}
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${giftFilter === key
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                  >
+                    {icon} {label} ({count})
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Gift List */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base sm:text-lg font-bold text-gray-800">
+                  Lịch sử ghi nhớ
+                </h3>
+                <button
+                  onClick={() => setIsGiftFormOpen(true)}
+                  className="flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Thêm mới
+                </button>
+              </div>
+
+              {filteredGifts.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredGifts.map(gift => (
+                    <GiftCard
+                      key={gift.id}
+                      gift={gift}
+                      onClick={() => setSelectedGift(gift)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="card p-8 text-center">
+                  <div className="text-4xl mb-3">🎁</div>
+                  <p className="text-gray-600 mb-2">
+                    {giftFilter === 'all'
+                      ? 'Chưa có ghi nhớ nào'
+                      : `Chưa có sự kiện ${GIFT_EVENT_TYPES[giftFilter]?.label || ''} nào`
+                    }
+                  </p>
+                  <button
+                    onClick={() => setIsGiftFormOpen(true)}
+                    className="text-blue-600 font-medium hover:text-blue-700"
+                  >
+                    Thêm ghi nhớ ngay
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Desktop FAB */}
@@ -545,17 +1069,28 @@ const App: React.FC = () => {
         <div className="flex items-center justify-around py-2" style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' }}>
           <button
             onClick={() => setCurrentView('dashboard')}
-            className={`flex flex-col items-center justify-center py-2 px-4 min-w-[64px] ${currentView === 'dashboard' ? 'text-blue-600' : 'text-gray-400'
+            className={`flex flex-col items-center justify-center py-2 px-3 min-w-[56px] ${currentView === 'dashboard' ? 'text-blue-600' : 'text-gray-400'
               }`}
           >
-            <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-6 h-6 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
             </svg>
-            <span className="text-xs font-medium">Dashboard</span>
+            <span className="text-xs font-medium">Tổng quan</span>
           </button>
 
           <button
-            onClick={() => setIsFormOpen(true)}
+            onClick={() => setCurrentView('transactions')}
+            className={`flex flex-col items-center justify-center py-2 px-3 min-w-[56px] ${currentView === 'transactions' ? 'text-blue-600' : 'text-gray-400'
+              }`}
+          >
+            <svg className="w-6 h-6 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <span className="text-xs font-medium">Giao dịch</span>
+          </button>
+
+          <button
+            onClick={() => currentView === 'debts' ? setIsDebtFormOpen(true) : setIsFormOpen(true)}
             className="flex items-center justify-center w-14 h-14 bg-blue-600 rounded-full shadow-lg -mt-6 text-white active:scale-95 transition-transform"
           >
             <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -564,14 +1099,14 @@ const App: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setCurrentView('transactions')}
-            className={`flex flex-col items-center justify-center py-2 px-4 min-w-[64px] ${currentView === 'transactions' ? 'text-blue-600' : 'text-gray-400'
+            onClick={() => setCurrentView('debts')}
+            className={`flex flex-col items-center justify-center py-2 px-3 min-w-[56px] ${currentView === 'debts' ? 'text-blue-600' : 'text-gray-400'
               }`}
           >
-            <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            <svg className="w-6 h-6 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
             </svg>
-            <span className="text-xs font-medium">Giao dịch</span>
+            <span className="text-xs font-medium">Dư nợ</span>
           </button>
         </div>
       </div>
@@ -599,6 +1134,45 @@ const App: React.FC = () => {
           transaction={selectedTransaction}
           onClose={() => setSelectedTransaction(null)}
           onDelete={handleDeleteTransaction}
+        />
+      )}
+
+      {/* Debt Form Modal */}
+      {isDebtFormOpen && (
+        <DebtForm
+          onSubmit={handleAddDebt}
+          onClose={() => setIsDebtFormOpen(false)}
+        />
+      )}
+
+      {/* Debt Detail Modal */}
+      {selectedDebt && (
+        <DebtDetail
+          debt={selectedDebt}
+          onClose={() => setSelectedDebt(null)}
+          onUpdate={() => {
+            loadDebts();
+            setSelectedDebt(null);
+          }}
+          onDelete={handleDeleteDebt}
+        />
+      )}
+
+      {/* Gift Form Modal */}
+      {isGiftFormOpen && (
+        <GiftForm
+          onSubmit={handleAddGift}
+          onClose={() => setIsGiftFormOpen(false)}
+        />
+      )}
+
+      {/* Gift Detail Modal */}
+      {selectedGift && (
+        <GiftDetail
+          gift={selectedGift}
+          allGifts={gifts}
+          onClose={() => setSelectedGift(null)}
+          onDelete={handleDeleteGift}
         />
       )}
     </div>

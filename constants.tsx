@@ -31,3 +31,14 @@ export const CATEGORY_ICONS: Record<string, string> = {
   'Giáo dục': '📚',
   'Khác': '📦',
 };
+
+// Gift event types for gift money tracking
+export const GIFT_EVENT_TYPES: Record<string, { label: string; icon: string }> = {
+  'wedding': { label: 'Đám cưới', icon: '💒' },
+  'birthday': { label: 'Sinh nhật', icon: '🎂' },
+  'housewarming': { label: 'Tân gia', icon: '🏠' },
+  'funeral': { label: 'Tang lễ', icon: '🪦' },
+  'baby': { label: 'Đầy tháng', icon: '👶' },
+  'graduation': { label: 'Tốt nghiệp', icon: '🎓' },
+  'other': { label: 'Khác', icon: '🎉' }
+};
