@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Transaction } from '../types';
 import { CATEGORY_ICONS } from '../constants';
 
@@ -7,14 +7,36 @@ interface TransactionDetailProps {
     transaction: Transaction;
     onClose: () => void;
     onDelete: (id: string) => void;
+    onUpdateDescription: (id: string, description: string) => Promise<void>;
 }
 
-const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onClose, onDelete }) => {
+const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onClose, onDelete, onUpdateDescription }) => {
+    const [isEditing, setIsEditing] = useState(false);
+    const [editedDescription, setEditedDescription] = useState(transaction.description || '');
+    const [isSaving, setIsSaving] = useState(false);
+
     const handleDelete = () => {
         if (confirm('Bạn có chắc muốn xóa giao dịch này?')) {
             onDelete(transaction.id);
             onClose();
         }
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            await onUpdateDescription(transaction.id, editedDescription);
+            setIsEditing(false);
+        } catch (error) {
+            console.error('Error updating description:', error);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleCancel = () => {
+        setEditedDescription(transaction.description || '');
+        setIsEditing(false);
     };
 
     return (
@@ -74,13 +96,64 @@ const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onCl
                             </span>
                         </div>
 
-                        {/* Description */}
-                        {transaction.description && (
-                            <div className="py-3 border-b border-gray-100">
-                                <span className="text-gray-500 block mb-1">Ghi chú</span>
-                                <p className="font-medium text-gray-800">{transaction.description}</p>
+                        {/* Description - Editable */}
+                        <div className="py-3 border-b border-gray-100">
+                            <div className="flex items-center justify-between mb-1">
+                                <span className="text-gray-500">Ghi chú</span>
+                                {!isEditing ? (
+                                    <button
+                                        onClick={() => setIsEditing(true)}
+                                        className="text-blue-500 hover:text-blue-700 text-sm font-medium flex items-center gap-1 transition-colors"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                        </svg>
+                                        Sửa
+                                    </button>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={handleCancel}
+                                            className="text-gray-400 hover:text-gray-600 text-sm font-medium transition-colors"
+                                            disabled={isSaving}
+                                        >
+                                            Hủy
+                                        </button>
+                                        <button
+                                            onClick={handleSave}
+                                            disabled={isSaving}
+                                            className="text-white bg-blue-500 hover:bg-blue-600 text-sm font-medium px-3 py-1 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1"
+                                        >
+                                            {isSaving ? (
+                                                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                                </svg>
+                                            ) : (
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                                                </svg>
+                                            )}
+                                            Lưu
+                                        </button>
+                                    </div>
+                                )}
                             </div>
-                        )}
+                            {isEditing ? (
+                                <textarea
+                                    value={editedDescription}
+                                    onChange={(e) => setEditedDescription(e.target.value)}
+                                    className="w-full p-3 border border-blue-200 rounded-xl text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent resize-none transition-all"
+                                    rows={3}
+                                    placeholder="Nhập ghi chú..."
+                                    autoFocus
+                                />
+                            ) : (
+                                <p className="font-medium text-gray-800">
+                                    {transaction.description || <span className="text-gray-400 italic">Chưa có ghi chú</span>}
+                                </p>
+                            )}
+                        </div>
 
                         {/* Receipt */}
                         {transaction.receipt_url && (

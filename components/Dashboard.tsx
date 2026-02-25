@@ -15,8 +15,10 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudget }) => {
     // Get current month transactions
-    const currentMonth = new Date().getMonth();
-    const currentYear = new Date().getFullYear();
+    const { currentMonth, currentYear } = useMemo(() => ({
+        currentMonth: new Date().getMonth(),
+        currentYear: new Date().getFullYear(),
+    }), []);
 
     const monthlyTransactions = useMemo(() => {
         return transactions.filter(t => {

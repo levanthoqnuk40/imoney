@@ -113,12 +113,48 @@ const App: React.FC = () => {
     }
   }, [user, loadTransactions]);
 
-  // Keep localStorage as backup
+  // Realtime subscription: auto-update when Sepay webhook creates new transactions
   useEffect(() => {
-    if (!isLoading) {
-      localStorage.setItem('finvise_transactions', JSON.stringify(transactions));
-    }
-  }, [transactions, isLoading]);
+    if (!user) return;
+
+    const channel = supabase
+      .channel('transactions-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'transactions',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const t = payload.new;
+          // Only auto-add if it came from Sepay (avoid duplicating manual adds)
+          if (t.source === 'sepay') {
+            const newTx: Transaction = {
+              id: t.id,
+              amount: parseFloat(t.amount),
+              category: t.category || 'Khác',
+              description: t.description || '',
+              date: t.transaction_date,
+              type: t.type === 'income' ? 'INCOME' : 'EXPENSE',
+              receipt_url: t.receipt_url || undefined,
+            };
+            setTransactions((prev) => [newTx, ...prev]);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
+  // Clean up old localStorage data (no longer used – all data is in Supabase)
+  useEffect(() => {
+    localStorage.removeItem('finvise_transactions');
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('finvise_budgets', JSON.stringify(budgets));
@@ -162,13 +198,10 @@ const App: React.FC = () => {
     }
 
     try {
-      console.log('Adding transaction for user:', user.id);
-
-      // Insert to Supabase with user_id
       const { data, error } = await supabase
         .from('transactions')
         .insert([{
-          user_id: user.id, // Required for RLS
+          user_id: user.id,
           type: newTx.type === 'INCOME' ? 'income' : 'expense',
           amount: newTx.amount,
           category: newTx.category,
@@ -181,14 +214,10 @@ const App: React.FC = () => {
         .single();
 
       if (error) {
-        console.error('Supabase error:', error);
         alert('Lỗi lưu giao dịch: ' + error.message);
         throw error;
       }
 
-      console.log('Transaction saved:', data);
-
-      // Add to local state
       const tx: Transaction = {
         id: data.id,
         amount: parseFloat(data.amount),
@@ -198,15 +227,9 @@ const App: React.FC = () => {
         type: newTx.type,
         receipt_url: data.receipt_url || undefined
       };
-      setTransactions([tx, ...transactions]);
-    } catch (error: any) {
+      setTransactions(prev => [tx, ...prev]);
+    } catch (error) {
       console.error('Error adding transaction:', error);
-      // Fallback: add locally with secure random ID
-      const tx: Transaction = {
-        ...newTx,
-        id: crypto.randomUUID()
-      };
-      setTransactions([tx, ...transactions]);
     }
   };
 
@@ -222,10 +245,35 @@ const App: React.FC = () => {
         .eq('user_id', user.id); // Security: Only delete if user owns it
 
       if (error) throw error;
-      // Only update local state on success
-      setTransactions(transactions.filter(t => t.id !== id));
+      setTransactions(prev => prev.filter(t => t.id !== id));
     } catch (error) {
       console.error('Error deleting transaction:', error);
+    }
+  };
+
+  // Update transaction description
+  const handleUpdateDescription = async (id: string, description: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('transactions')
+        .update({ description })
+        .eq('id', id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      setTransactions(prev => prev.map(t =>
+        t.id === id ? { ...t, description } : t
+      ));
+
+      if (selectedTransaction?.id === id) {
+        setSelectedTransaction({ ...selectedTransaction, description });
+      }
+    } catch (error) {
+      console.error('Error updating description:', error);
+      throw error;
     }
   };
 
@@ -337,7 +385,7 @@ const App: React.FC = () => {
         .eq('user_id', user.id);
 
       if (error) throw error;
-      setDebts(debts.filter(d => d.id !== id));
+      setDebts(prev => prev.filter(d => d.id !== id));
     } catch (error) {
       console.error('Error deleting debt:', error);
     }
@@ -451,7 +499,7 @@ const App: React.FC = () => {
         .eq('user_id', user.id);
 
       if (error) throw error;
-      setGifts(gifts.filter(g => g.id !== id));
+      setGifts(prev => prev.filter(g => g.id !== id));
     } catch (error) {
       console.error('Error deleting gift:', error);
     }
@@ -1147,6 +1195,7 @@ const App: React.FC = () => {
           transaction={selectedTransaction}
           onClose={() => setSelectedTransaction(null)}
           onDelete={handleDeleteTransaction}
+          onUpdateDescription={handleUpdateDescription}
         />
       )}
 
@@ -1192,10 +1241,16 @@ const App: React.FC = () => {
   );
 };
 
-// Tip Item Component
+// Tip Item Component – uses static class map to avoid Tailwind purge issues
+const TIP_COLOR_MAP: Record<string, string> = {
+  amber: 'bg-amber-100 text-amber-600',
+  blue: 'bg-blue-100 text-blue-600',
+  emerald: 'bg-emerald-100 text-emerald-600',
+};
+
 const TipItem: React.FC<{ emoji: string; color: string; text: string }> = ({ emoji, color, text }) => (
   <li className="flex items-start">
-    <span className={`bg-${color}-100 p-2 rounded-lg mr-3 text-${color}-600 flex-shrink-0`}>{emoji}</span>
+    <span className={`${TIP_COLOR_MAP[color] || 'bg-gray-100 text-gray-600'} p-2 rounded-lg mr-3 flex-shrink-0`}>{emoji}</span>
     <p className="text-sm text-gray-600">{text}</p>
   </li>
 );

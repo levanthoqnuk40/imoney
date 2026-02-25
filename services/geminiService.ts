@@ -2,11 +2,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Transaction } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
 
 export const getFinancialAdvice = async (transactions: Transaction[]) => {
   try {
-    const transactionSummary = transactions.map(t => 
+    const transactionSummary = transactions.map(t =>
       `${t.date}: ${t.type === 'INCOME' ? '+' : '-'}${t.amount.toLocaleString('vi-VN')} VND (${t.category} - ${t.description})`
     ).join('\n');
 

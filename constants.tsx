@@ -7,6 +7,7 @@ export const EXPENSE_CATEGORIES = [
   'Mua sắm',
   'Sức khỏe',
   'Giáo dục',
+  'Chuyển khoản đi',
   'Khác'
 ];
 
@@ -15,6 +16,7 @@ export const INCOME_CATEGORIES = [
   'Thưởng',
   'Đầu tư',
   'Kinh doanh',
+  'Chuyển khoản nhận',
   'Khác'
 ];
 
@@ -29,6 +31,8 @@ export const CATEGORY_ICONS: Record<string, string> = {
   'Mua sắm': '🛒',
   'Sức khỏe': '💊',
   'Giáo dục': '📚',
+  'Chuyển khoản nhận': '🏦',
+  'Chuyển khoản đi': '🏦',
   'Khác': '📦',
 };
 
