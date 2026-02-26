@@ -81,7 +81,8 @@ const App: React.FC = () => {
         .from('transactions')
         .select('*')
         .eq('user_id', user.id) // Security: Only load current user's transactions
-        .order('transaction_date', { ascending: false });
+        .order('transaction_date', { ascending: false })
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
 
@@ -775,41 +776,62 @@ const App: React.FC = () => {
                     <h3 className="text-base sm:text-lg font-bold text-gray-800">Lịch sử giao dịch</h3>
                     <span className="text-xs sm:text-sm text-gray-500">{transactions.length} giao dịch</span>
                   </div>
-                  <div className="divide-y divide-gray-50">
+                  <div>
                     {transactions.length > 0 ? (
-                      transactions.map(tx => (
-                        <div
-                          key={tx.id}
-                          className="transaction-item group cursor-pointer hover:bg-gray-50"
-                          onClick={() => setSelectedTransaction(tx)}
-                        >
-                          <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
-                            <div className={`w-10 h-10 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg ${tx.type === 'INCOME' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
-                              }`}>
-                              {tx.type === 'INCOME' ? '↓' : '↑'}
+                      (() => {
+                        const grouped: Record<string, typeof transactions> = {};
+                        transactions.forEach(tx => {
+                          if (!grouped[tx.date]) grouped[tx.date] = [];
+                          grouped[tx.date].push(tx);
+                        });
+                        return Object.entries(grouped).map(([date, txs]) => {
+                          const d = new Date(date);
+                          const formatted = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+                          return (
+                            <div key={date}>
+                              <div className="sticky top-0 z-10 px-4 sm:px-6 py-2 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+                                <span className="text-xs sm:text-sm font-semibold text-gray-600">📅 {formatted}</span>
+                                <span className="text-xs text-gray-400">{txs.length} giao dịch</span>
+                              </div>
+                              <div className="divide-y divide-gray-50">
+                                {txs.map(tx => (
+                                  <div
+                                    key={tx.id}
+                                    className="transaction-item group cursor-pointer hover:bg-gray-50"
+                                    onClick={() => setSelectedTransaction(tx)}
+                                  >
+                                    <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
+                                      <div className={`w-10 h-10 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg ${tx.type === 'INCOME' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+                                        }`}>
+                                        {tx.type === 'INCOME' ? '↓' : '↑'}
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <p className="font-semibold text-gray-800 text-sm sm:text-base truncate">{tx.category}</p>
+                                        <p className="text-xs text-gray-500 truncate">{tx.description || 'Không có ghi chú'}</p>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
+                                      <p className={`font-bold text-right text-sm sm:text-base ${tx.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'
+                                        }`}>
+                                        {tx.type === 'INCOME' ? '+' : '-'}{tx.amount.toLocaleString('vi-VN')}
+                                      </p>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
+                                        className="transaction-delete-btn text-gray-300 hover:text-rose-500 transition-all touch-target flex items-center justify-center"
+                                        aria-label="Xóa giao dịch"
+                                      >
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="font-semibold text-gray-800 text-sm sm:text-base truncate">{tx.category}</p>
-                              <p className="text-xs text-gray-500 truncate">{tx.description || 'Không có ghi chú'} • {tx.date}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
-                            <p className={`font-bold text-right text-sm sm:text-base ${tx.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'
-                              }`}>
-                              {tx.type === 'INCOME' ? '+' : '-'}{tx.amount.toLocaleString('vi-VN')}
-                            </p>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
-                              className="transaction-delete-btn text-gray-300 hover:text-rose-500 transition-all touch-target flex items-center justify-center"
-                              aria-label="Xóa giao dịch"
-                            >
-                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                              </svg>
-                            </button>
-                          </div>
-                        </div>
-                      ))
+                          );
+                        });
+                      })()
                     ) : (
                       <div className="p-8 sm:p-12 text-center text-gray-400">
                         <div className="text-4xl mb-3">📊</div>
