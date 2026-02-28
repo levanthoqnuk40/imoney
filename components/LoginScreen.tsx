@@ -74,10 +74,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 {/* Logo */}
                 <div className="text-center mb-8">
                     <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl shadow-lg mb-4">
-                        <span className="text-white font-bold text-2xl">F</span>
+                        <span className="text-white font-bold text-2xl">💰</span>
                     </div>
                     <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                        FinVise
+                        Quản Lý Tài Chính
                     </h1>
                     <p className="text-gray-500 mt-2">Quản lý tài chính thông minh</p>
                 </div>
@@ -89,8 +89,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                         <button
                             onClick={() => setIsLogin(true)}
                             className={`flex-1 py-2.5 text-sm font-medium rounded-lg transition-all ${isLogin
-                                    ? 'bg-white text-blue-600 shadow-sm'
-                                    : 'text-gray-500 hover:text-gray-700'
+                                ? 'bg-white text-blue-600 shadow-sm'
+                                : 'text-gray-500 hover:text-gray-700'
                                 }`}
                         >
                             Đăng nhập
@@ -98,8 +98,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                         <button
                             onClick={() => setIsLogin(false)}
                             className={`flex-1 py-2.5 text-sm font-medium rounded-lg transition-all ${!isLogin
-                                    ? 'bg-white text-blue-600 shadow-sm'
-                                    : 'text-gray-500 hover:text-gray-700'
+                                ? 'bg-white text-blue-600 shadow-sm'
+                                : 'text-gray-500 hover:text-gray-700'
                                 }`}
                         >
                             Đăng ký

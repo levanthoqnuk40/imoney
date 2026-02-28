@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Quản Lý Tài Chính</string>
+    <string name="title_activity_main">Quản Lý Tài Chính</string>
+    <string name="package_name">com.imoney.app</string>
+    <string name="custom_url_scheme">com.imoney.app</string>
+</resources>

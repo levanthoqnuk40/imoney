@@ -7,10 +7,16 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:mobile": "CAPACITOR=true vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && gh-pages -d dist"
+    "deploy": "npm run build && gh-pages -d dist",
+    "cap:sync": "npm run build:mobile && npx cap sync",
+    "cap:open": "npx cap open android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/cli": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
     "@google/genai": "^1.35.0",
     "@supabase/supabase-js": "^2.90.1",
     "react": "^19.2.3",

@@ -4,9 +4,10 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  const isCapacitor = process.env.CAPACITOR === 'true';
   return {
-    // Base path for GitHub Pages (repo name)
-    base: '/imoney/',
+    // Use './' for Capacitor (mobile), '/imoney/' for GitHub Pages
+    base: isCapacitor ? './' : '/imoney/',
     server: {
       port: 3000,
       host: '0.0.0.0',
