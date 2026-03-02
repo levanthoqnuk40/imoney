@@ -3,17 +3,18 @@ import React, { useMemo } from 'react';
 import { Transaction, Budget } from '../types';
 import { EXPENSE_CATEGORIES, COLORS, CATEGORY_ICONS } from '../constants';
 import BudgetCard from './BudgetCard';
-import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, AreaChart, Area } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, AreaChart, Area, BarChart, Bar, LabelList } from 'recharts';
 
 interface DashboardProps {
     transactions: Transaction[];
     budgets: Budget[];
     onEditBudget: () => void;
+    onMonthClick?: (yearMonth: string) => void;
 }
 
 // CATEGORY_ICONS is now imported from constants.tsx
 
-const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudget }) => {
+const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudget, onMonthClick }) => {
     // Get current month transactions
     const { currentMonth, currentYear } = useMemo(() => ({
         currentMonth: new Date().getMonth(),
@@ -43,12 +44,15 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
         const months: Record<string, { income: number; expense: number; month: string }> = {};
         const monthNames = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T11', 'T12'];
 
-        // Initialize last 6 months
+        // Build a reverse lookup: label -> 'YYYY-MM'
+        const labelToYearMonth: Record<string, string> = {};
         for (let i = 5; i >= 0; i--) {
             const d = new Date();
             d.setMonth(d.getMonth() - i);
             const key = `${d.getFullYear()}-${d.getMonth()}`;
+            const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
             months[key] = { income: 0, expense: 0, month: monthNames[d.getMonth()] };
+            labelToYearMonth[monthNames[d.getMonth()]] = ym;
         }
 
         transactions.forEach(t => {
@@ -60,7 +64,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
             }
         });
 
-        return Object.values(months);
+        return { data: Object.values(months), labelToYearMonth };
     }, [transactions]);
 
     // Category breakdown for pie chart
@@ -100,6 +104,34 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
         return { thisWeek, lastWeek, change };
     }, [transactions]);
 
+    // Previous month comparison
+    const monthComparison = useMemo(() => {
+        const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+        const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+
+        const prevTransactions = transactions.filter(t => {
+            const d = new Date(t.date);
+            return d.getMonth() === prevMonth && d.getFullYear() === prevYear;
+        });
+
+        const prevIncome = prevTransactions.filter(t => t.type === 'INCOME').reduce((acc, t) => acc + t.amount, 0);
+        const prevExpense = prevTransactions.filter(t => t.type === 'EXPENSE').reduce((acc, t) => acc + t.amount, 0);
+
+        const incomeChange = prevIncome > 0 ? ((totals.income - prevIncome) / prevIncome) * 100 : 0;
+        const expenseChange = prevExpense > 0 ? ((totals.expense - prevExpense) / prevExpense) * 100 : 0;
+
+        const monthNames = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6',
+            'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
+
+        return {
+            prevIncome, prevExpense,
+            incomeChange, expenseChange,
+            prevMonthName: monthNames[prevMonth],
+            currentMonthName: monthNames[currentMonth],
+            hasPrevData: prevIncome > 0 || prevExpense > 0,
+        };
+    }, [transactions, currentMonth, currentYear, totals]);
+
     return (
         <div className="space-y-6">
             {/* Summary Cards Row */}
@@ -123,6 +155,66 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                     </p>
                 </div>
             </div>
+
+            {/* Monthly History — 6 Month Grouped Bar Chart */}
+            {monthlyTrend.data.some(m => m.income > 0 || m.expense > 0) && (
+                <div className="card p-4 sm:p-6">
+                    <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                        <span>📊</span> Thu chi 6 tháng gần nhất
+                    </h3>
+                    <div style={{ width: '100%', height: 280 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                                data={monthlyTrend.data}
+                                barGap={4}
+                                barCategoryGap="15%"
+                                margin={{ top: 20 }}
+                                onClick={(state) => {
+                                    if (state?.activeLabel && onMonthClick) {
+                                        const ym = monthlyTrend.labelToYearMonth[state.activeLabel];
+                                        if (ym) onMonthClick(ym);
+                                    }
+                                }}
+                                style={{ cursor: onMonthClick ? 'pointer' : 'default' }}
+                            >
+                                <XAxis dataKey="month" fontSize={12} tickMargin={8} />
+                                <YAxis hide />
+                                <Tooltip formatter={(value: number) => value.toLocaleString('vi-VN') + ' đ'} />
+                                <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                <Bar dataKey="income" name="Thu" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={36}>
+                                    <LabelList dataKey="income" position="top" fontSize={9} fill="#059669" formatter={(v: number) => v > 0 ? (v >= 1000000 ? (v / 1000000).toFixed(1) + 'tr' : v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v.toString()) : ''} />
+                                </Bar>
+                                <Bar dataKey="expense" name="Chi" fill="#f43f5e" radius={[4, 4, 0, 0]} maxBarSize={36}>
+                                    <LabelList dataKey="expense" position="top" fontSize={9} fill="#e11d48" formatter={(v: number) => v > 0 ? (v >= 1000000 ? (v / 1000000).toFixed(1) + 'tr' : v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v.toString()) : ''} />
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                    {/* vs previous month badges */}
+                    {monthComparison.hasPrevData && (
+                        <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-100">
+                            <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-50">
+                                <span className="text-xs text-gray-600">Thu so với {monthComparison.prevMonthName}</span>
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${monthComparison.incomeChange >= 0
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-rose-100 text-rose-700'
+                                    }`}>
+                                    {monthComparison.incomeChange >= 0 ? '↑' : '↓'}{Math.abs(monthComparison.incomeChange).toFixed(0)}%
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between p-2 rounded-lg bg-rose-50">
+                                <span className="text-xs text-gray-600">Chi so với {monthComparison.prevMonthName}</span>
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${monthComparison.expenseChange <= 0
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-rose-100 text-rose-700'
+                                    }`}>
+                                    {monthComparison.expenseChange >= 0 ? '↑' : '↓'}{Math.abs(monthComparison.expenseChange).toFixed(0)}%
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Budget Progress */}
             <div>
@@ -171,9 +263,9 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                 <div className="card p-4 sm:p-6">
                     <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-4">Xu hướng 6 tháng</h3>
                     <div className="chart-container">
-                        {monthlyTrend.some(m => m.income > 0 || m.expense > 0) ? (
+                        {monthlyTrend.data.some(m => m.income > 0 || m.expense > 0) ? (
                             <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={monthlyTrend}>
+                                <AreaChart data={monthlyTrend.data}>
                                     <defs>
                                         <linearGradient id="incomeGrad" x1="0" y1="0" x2="0" y2="1">
                                             <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />

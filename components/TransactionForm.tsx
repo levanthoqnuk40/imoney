@@ -66,8 +66,14 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
 
     // Upload receipt if exists
     if (receiptFile) {
-      const url = await StorageService.uploadReceipt(receiptFile);
-      if (url) receiptUrl = url;
+      if (navigator.onLine) {
+        const url = await StorageService.uploadReceipt(receiptFile);
+        if (url) receiptUrl = url;
+      } else {
+        // Offline: pass the base64 preview as receipt_url placeholder
+        // The sync service will handle the actual upload later
+        receiptUrl = receiptPreview || undefined;
+      }
     }
 
     onAdd({

@@ -18,6 +18,9 @@ import { supabase } from './services/supabase.service';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
 import { COLORS, GIFT_EVENT_TYPES } from './constants';
 import { User } from '@supabase/supabase-js';
+import * as OfflineDB from './services/offline.service';
+import * as SyncService from './services/sync.service';
+import { useNetworkStatus } from './hooks/useNetworkStatus';
 
 const App: React.FC = () => {
   // Auth state
@@ -27,16 +30,14 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [budgets, setBudgets] = useState<Budget[]>(() => {
-    const saved = localStorage.getItem('finvise_budgets');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [budgets, setBudgets] = useState<Budget[]>([]);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [aiAdvice, setAiAdvice] = useState<AIAdvice | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showTips, setShowTips] = useState(false);
+  const [filterMonth, setFilterMonth] = useState<string | null>(null); // 'YYYY-MM' or null
 
   // Debt management state
   const [debts, setDebts] = useState<Debt[]>([]);
@@ -50,69 +51,156 @@ const App: React.FC = () => {
   const [selectedGift, setSelectedGift] = useState<GiftRecord | null>(null);
   const [giftFilter, setGiftFilter] = useState<'all' | GiftEventType>('all');
 
-  // Check auth state on mount
-  useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setAuthLoading(false);
-    });
+  // Pending sync count for UI badge
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+  // Refresh pending count helper
+  const refreshPendingCount = useCallback(async () => {
+    const count = await SyncService.getPendingCount();
+    setPendingSyncCount(count);
+  }, []);
+
+  // Sync handler: process queue + reload all data
+  const handleSync = useCallback(async () => {
+    const result = await SyncService.processQueue();
+    // Reload fresh data from Supabase after sync
+    if (user) {
+      await Promise.all([
+        loadTransactionsRef.current?.(),
+        loadDebtsRef.current?.(),
+        loadGiftsRef.current?.(),
+        loadBudgetsRef.current?.(),
+      ]);
+    }
+    await refreshPendingCount();
+    return result;
+  }, [user, refreshPendingCount]);
+
+  // Refs to hold latest load functions (avoids circular deps)
+  const loadTransactionsRef = React.useRef<(() => Promise<void>) | null>(null);
+  const loadDebtsRef = React.useRef<(() => Promise<void>) | null>(null);
+  const loadGiftsRef = React.useRef<(() => Promise<void>) | null>(null);
+  const loadBudgetsRef = React.useRef<(() => Promise<void>) | null>(null);
+
+  // Network status hook
+  const { isOnline, isSyncing, syncResult, dismissSyncResult } = useNetworkStatus({
+    onReconnect: handleSync,
+  });
+
+  // Check auth state on mount — with offline fallback
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        // Try online auth first
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          setUser(session.user);
+          // Cache session for offline use
+          await OfflineDB.cacheAuthSession(session.user, session);
+          setAuthLoading(false);
+          return;
+        }
+      } catch {
+        // Network error — try offline cache
+      }
+
+      // Fallback: load cached auth when offline
+      if (!navigator.onLine) {
+        const cached = await OfflineDB.getCachedAuth();
+        if (cached) {
+          // Create a minimal User-like object for offline use
+          setUser({
+            id: cached.userId,
+            email: cached.email,
+            user_metadata: { full_name: cached.fullName },
+          } as User);
+        }
+      }
+      setAuthLoading(false);
+    };
+
+    initAuth();
+
+    // Listen for auth changes (online only)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+        await OfflineDB.cacheAuthSession(session.user, session);
+      } else {
+        setUser(null);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // Handle logout
+  // Handle logout — clear offline cache too
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    await OfflineDB.clearCachedAuth();
     setTransactions([]);
+    setDebts([]);
+    setGifts([]);
+    setBudgets([]);
   };
 
-  // Load transactions from Supabase - filtered by user_id for security
+  // Load transactions — online: fetch from Supabase + cache; offline: read IndexedDB
   const loadTransactions = useCallback(async () => {
     if (!user) return;
 
     try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('user_id', user.id) // Security: Only load current user's transactions
-        .order('transaction_date', { ascending: false })
-        .order('created_at', { ascending: false });
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('transaction_date', { ascending: false })
+          .order('created_at', { ascending: false });
 
-      if (error) throw error;
+        if (error) throw error;
 
-      // Map Supabase data to app Transaction format
-      const mappedTransactions: Transaction[] = (data || []).map(t => ({
-        id: t.id,
-        amount: parseFloat(t.amount),
-        category: t.category || 'Khác',
-        description: t.description || '',
-        date: t.transaction_date,
-        type: t.type === 'income' ? 'INCOME' : 'EXPENSE',
-        receipt_url: t.receipt_url || undefined
-      }));
+        const mappedTransactions: Transaction[] = (data || []).map(t => ({
+          id: t.id,
+          amount: parseFloat(t.amount),
+          category: t.category || 'Khác',
+          description: t.description || '',
+          date: t.transaction_date,
+          type: t.type === 'income' ? 'INCOME' : 'EXPENSE',
+          receipt_url: t.receipt_url || undefined
+        }));
 
-      setTransactions(mappedTransactions);
+        setTransactions(mappedTransactions);
+        // Cache to IndexedDB
+        await OfflineDB.clearStore('transactions');
+        await OfflineDB.putAll('transactions', mappedTransactions);
+      } else {
+        // Offline: load from IndexedDB
+        const cached = await OfflineDB.getAll<Transaction>('transactions');
+        // Sort by date descending (same as Supabase order)
+        cached.sort((a, b) => b.date.localeCompare(a.date));
+        setTransactions(cached);
+      }
     } catch (error) {
       console.error('Error loading transactions:', error);
-      // Show empty state on error - don't fallback to localStorage (security)
-      setTransactions([]);
+      // Fallback to IndexedDB on network error
+      const cached = await OfflineDB.getAll<Transaction>('transactions');
+      cached.sort((a, b) => b.date.localeCompare(a.date));
+      setTransactions(cached);
     } finally {
       setIsLoading(false);
     }
   }, [user]);
 
+  // Keep ref in sync for the sync handler
+  loadTransactionsRef.current = loadTransactions;
+
   // Load transactions when user is authenticated
   useEffect(() => {
     if (user) {
       loadTransactions();
+      refreshPendingCount();
     }
-  }, [user, loadTransactions]);
+  }, [user, loadTransactions, refreshPendingCount]);
 
   // Realtime subscription: auto-update when Sepay webhook creates new transactions
   useEffect(() => {
@@ -152,14 +240,11 @@ const App: React.FC = () => {
     };
   }, [user]);
 
-  // Clean up old localStorage data (no longer used – all data is in Supabase)
+  // Clean up old localStorage data (migrated to Supabase/IndexedDB)
   useEffect(() => {
     localStorage.removeItem('finvise_transactions');
+    localStorage.removeItem('finvise_budgets');
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem('finvise_budgets', JSON.stringify(budgets));
-  }, [budgets]);
 
   const stats = useMemo(() => {
     const income = transactions.filter(t => t.type === 'INCOME').reduce((acc, curr) => acc + curr.amount, 0);
@@ -198,57 +283,94 @@ const App: React.FC = () => {
       return;
     }
 
-    try {
-      const { data, error } = await supabase
-        .from('transactions')
-        .insert([{
-          user_id: user.id,
-          type: newTx.type === 'INCOME' ? 'income' : 'expense',
-          amount: newTx.amount,
-          category: newTx.category,
-          description: newTx.description,
-          transaction_date: newTx.date,
-          currency: 'VND',
-          receipt_url: newTx.receipt_url || null
-        }])
-        .select()
-        .single();
+    // Generate a temporary local ID
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-      if (error) {
-        alert('Lỗi lưu giao dịch: ' + error.message);
-        throw error;
+    const tx: Transaction = {
+      id: tempId,
+      amount: newTx.amount,
+      category: newTx.category,
+      description: newTx.description,
+      date: newTx.date,
+      type: newTx.type,
+      receipt_url: newTx.receipt_url || undefined,
+    };
+
+    // Optimistic update: show immediately in UI + save to IndexedDB
+    setTransactions(prev => [tx, ...prev]);
+    await OfflineDB.put('transactions', tx);
+
+    const supabasePayload = {
+      _tempId: tempId,
+      user_id: user.id,
+      type: newTx.type === 'INCOME' ? 'income' : 'expense',
+      amount: newTx.amount,
+      category: newTx.category,
+      description: newTx.description,
+      transaction_date: newTx.date,
+      currency: 'VND',
+      receipt_url: newTx.receipt_url || null,
+    };
+
+    if (navigator.onLine) {
+      try {
+        const { _tempId, ...serverData } = supabasePayload;
+        const { data, error } = await supabase
+          .from('transactions')
+          .insert([serverData])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        // Replace temp item with real server data
+        const serverTx: Transaction = {
+          id: data.id,
+          amount: parseFloat(data.amount),
+          category: data.category || 'Khác',
+          description: data.description || '',
+          date: data.transaction_date,
+          type: newTx.type,
+          receipt_url: data.receipt_url || undefined,
+        };
+        setTransactions(prev => prev.map(t => t.id === tempId ? serverTx : t));
+        await OfflineDB.deleteById('transactions', tempId);
+        await OfflineDB.put('transactions', serverTx);
+      } catch (error) {
+        console.error('Online insert failed, queuing for sync:', error);
+        await SyncService.addToQueue({ table: 'transactions', action: 'INSERT', data: supabasePayload });
+        await refreshPendingCount();
       }
-
-      const tx: Transaction = {
-        id: data.id,
-        amount: parseFloat(data.amount),
-        category: data.category || 'Khác',
-        description: data.description || '',
-        date: data.transaction_date,
-        type: newTx.type,
-        receipt_url: data.receipt_url || undefined
-      };
-      setTransactions(prev => [tx, ...prev]);
-    } catch (error) {
-      console.error('Error adding transaction:', error);
+    } else {
+      // Offline: queue for later sync
+      await SyncService.addToQueue({ table: 'transactions', action: 'INSERT', data: supabasePayload });
+      await refreshPendingCount();
     }
   };
 
   const handleDeleteTransaction = async (id: string) => {
     if (!user) return;
 
-    try {
-      // Delete from Supabase - verify user owns the transaction
-      const { error } = await supabase
-        .from('transactions')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.id); // Security: Only delete if user owns it
+    // Optimistic: remove from UI + IndexedDB immediately
+    setTransactions(prev => prev.filter(t => t.id !== id));
+    await OfflineDB.deleteById('transactions', id);
 
-      if (error) throw error;
-      setTransactions(prev => prev.filter(t => t.id !== id));
-    } catch (error) {
-      console.error('Error deleting transaction:', error);
+    if (navigator.onLine && !id.startsWith('temp_')) {
+      try {
+        const { error } = await supabase
+          .from('transactions')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', user.id);
+        if (error) throw error;
+      } catch (error) {
+        console.error('Online delete failed, queuing:', error);
+        await SyncService.addToQueue({ table: 'transactions', action: 'DELETE', data: { id, user_id: user.id } });
+        await refreshPendingCount();
+      }
+    } else if (!id.startsWith('temp_')) {
+      await SyncService.addToQueue({ table: 'transactions', action: 'DELETE', data: { id, user_id: user.id } });
+      await refreshPendingCount();
     }
   };
 
@@ -256,25 +378,35 @@ const App: React.FC = () => {
   const handleUpdateDescription = async (id: string, description: string) => {
     if (!user) return;
 
-    try {
-      const { error } = await supabase
-        .from('transactions')
-        .update({ description })
-        .eq('id', id)
-        .eq('user_id', user.id);
+    // Optimistic update UI + IndexedDB
+    setTransactions(prev => prev.map(t =>
+      t.id === id ? { ...t, description } : t
+    ));
+    if (selectedTransaction?.id === id) {
+      setSelectedTransaction({ ...selectedTransaction, description });
+    }
 
-      if (error) throw error;
+    const existing = await OfflineDB.getById<Transaction>('transactions', id);
+    if (existing) {
+      await OfflineDB.put('transactions', { ...existing, description });
+    }
 
-      setTransactions(prev => prev.map(t =>
-        t.id === id ? { ...t, description } : t
-      ));
-
-      if (selectedTransaction?.id === id) {
-        setSelectedTransaction({ ...selectedTransaction, description });
+    if (navigator.onLine && !id.startsWith('temp_')) {
+      try {
+        const { error } = await supabase
+          .from('transactions')
+          .update({ description })
+          .eq('id', id)
+          .eq('user_id', user.id);
+        if (error) throw error;
+      } catch (error) {
+        console.error('Online update failed, queuing:', error);
+        await SyncService.addToQueue({ table: 'transactions', action: 'UPDATE', data: { id, user_id: user.id, description } });
+        await refreshPendingCount();
       }
-    } catch (error) {
-      console.error('Error updating description:', error);
-      throw error;
+    } else if (!id.startsWith('temp_')) {
+      await SyncService.addToQueue({ table: 'transactions', action: 'UPDATE', data: { id, user_id: user.id, description } });
+      await refreshPendingCount();
     }
   };
 
@@ -286,47 +418,181 @@ const App: React.FC = () => {
     setIsAiLoading(false);
   };
 
-  const handleSaveBudgets = (newBudgets: Budget[]) => {
+  // ============================================
+  // BUDGET MANAGEMENT FUNCTIONS
+  // ============================================
+
+  // Load budgets — online: Supabase + cache; offline: IndexedDB
+  const loadBudgets = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('budgets')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (error) throw error;
+
+        const mapped: Budget[] = (data || []).map(b => ({
+          id: b.id,
+          category: b.category,
+          limit: parseFloat(b.budget_limit),
+          period: b.period || 'monthly',
+        }));
+
+        setBudgets(mapped);
+        await OfflineDB.clearStore('budgets');
+        await OfflineDB.putAll('budgets', mapped);
+      } else {
+        const cached = await OfflineDB.getAll<Budget>('budgets');
+        setBudgets(cached);
+      }
+    } catch (error) {
+      console.error('Error loading budgets:', error);
+      const cached = await OfflineDB.getAll<Budget>('budgets');
+      setBudgets(cached);
+    }
+  }, [user]);
+
+  // Keep ref in sync
+  loadBudgetsRef.current = loadBudgets;
+
+  // Load budgets when user is authenticated
+  useEffect(() => {
+    if (user) {
+      loadBudgets();
+    }
+  }, [user, loadBudgets]);
+
+  const handleSaveBudgets = async (newBudgets: Budget[]) => {
+    if (!user) return;
+
+    // Optimistic update + cache
     setBudgets(newBudgets);
+    await OfflineDB.clearStore('budgets');
+    await OfflineDB.putAll('budgets', newBudgets);
+
+    if (navigator.onLine) {
+      try {
+        // Delete all existing budgets for this user, then insert new ones
+        const { error: deleteError } = await supabase
+          .from('budgets')
+          .delete()
+          .eq('user_id', user.id);
+        if (deleteError) throw deleteError;
+
+        if (newBudgets.length > 0) {
+          const { error: insertError } = await supabase
+            .from('budgets')
+            .insert(newBudgets.map(b => ({
+              user_id: user.id,
+              category: b.category,
+              budget_limit: b.limit,
+              period: b.period,
+            })));
+          if (insertError) throw insertError;
+        }
+
+        // Reload to get server IDs
+        await loadBudgets();
+      } catch (error) {
+        console.error('Online budget save failed, queuing:', error);
+        alert('Lỗi lưu ngân sách trực tiếp, sẽ đồng bộ khi có mạng ổn định.');
+        // Queue a DELETE + INSERT batch
+        await SyncService.addToQueue({
+          table: 'budgets',
+          action: 'DELETE',
+          data: { user_id: user.id },
+        });
+        for (const b of newBudgets) {
+          await SyncService.addToQueue({
+            table: 'budgets',
+            action: 'INSERT',
+            data: {
+              _tempId: b.id,
+              user_id: user.id,
+              category: b.category,
+              budget_limit: b.limit,
+              period: b.period,
+            },
+          });
+        }
+        await refreshPendingCount();
+      }
+    } else {
+      // Offline: queue for sync
+      await SyncService.addToQueue({
+        table: 'budgets',
+        action: 'DELETE',
+        data: { user_id: user.id },
+      });
+      for (const b of newBudgets) {
+        await SyncService.addToQueue({
+          table: 'budgets',
+          action: 'INSERT',
+          data: {
+            _tempId: b.id,
+            user_id: user.id,
+            category: b.category,
+            budget_limit: b.limit,
+            period: b.period,
+          },
+        });
+      }
+      await refreshPendingCount();
+    }
   };
 
   // ============================================
   // DEBT MANAGEMENT FUNCTIONS
   // ============================================
 
-  // Load debts from Supabase
+  // Load debts — online: Supabase + cache; offline: IndexedDB
   const loadDebts = useCallback(async () => {
     if (!user) return;
 
     try {
-      const { data, error } = await supabase
-        .from('debts')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('debts')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
 
-      if (error) throw error;
+        if (error) throw error;
 
-      const mappedDebts: Debt[] = (data || []).map(d => ({
-        id: d.id,
-        user_id: d.user_id,
-        type: d.type as 'receivable' | 'payable',
-        person_name: d.person_name,
-        original_amount: parseFloat(d.original_amount),
-        paid_amount: parseFloat(d.paid_amount || 0),
-        remaining_amount: parseFloat(d.original_amount) - parseFloat(d.paid_amount || 0),
-        created_date: d.created_date,
-        due_date: d.due_date || undefined,
-        description: d.description || undefined,
-        status: d.status as 'pending' | 'partial' | 'completed'
-      }));
+        const mappedDebts: Debt[] = (data || []).map(d => ({
+          id: d.id,
+          user_id: d.user_id,
+          type: d.type as 'receivable' | 'payable',
+          person_name: d.person_name,
+          original_amount: parseFloat(d.original_amount),
+          paid_amount: parseFloat(d.paid_amount || 0),
+          remaining_amount: parseFloat(d.original_amount) - parseFloat(d.paid_amount || 0),
+          created_date: d.created_date,
+          due_date: d.due_date || undefined,
+          description: d.description || undefined,
+          status: d.status as 'pending' | 'partial' | 'completed'
+        }));
 
-      setDebts(mappedDebts);
+        setDebts(mappedDebts);
+        await OfflineDB.clearStore('debts');
+        await OfflineDB.putAll('debts', mappedDebts);
+      } else {
+        const cached = await OfflineDB.getAll<Debt>('debts');
+        setDebts(cached);
+      }
     } catch (error) {
       console.error('Error loading debts:', error);
-      setDebts([]);
+      const cached = await OfflineDB.getAll<Debt>('debts');
+      setDebts(cached);
     }
   }, [user]);
+
+  // Keep ref in sync
+  loadDebtsRef.current = loadDebts;
 
   // Load debts when user is authenticated
   useEffect(() => {
@@ -349,28 +615,52 @@ const App: React.FC = () => {
       return;
     }
 
-    try {
-      const { error } = await supabase
-        .from('debts')
-        .insert([{
-          user_id: user.id,
-          type: newDebt.type,
-          person_name: newDebt.person_name,
-          original_amount: newDebt.original_amount,
-          created_date: newDebt.created_date,
-          due_date: newDebt.due_date || null,
-          description: newDebt.description || null,
-          status: 'pending'
-        }]);
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const localDebt: Debt = {
+      id: tempId,
+      user_id: user.id,
+      type: newDebt.type,
+      person_name: newDebt.person_name,
+      original_amount: newDebt.original_amount,
+      paid_amount: 0,
+      remaining_amount: newDebt.original_amount,
+      created_date: newDebt.created_date,
+      due_date: newDebt.due_date,
+      description: newDebt.description,
+      status: 'pending',
+    };
 
-      if (error) throw error;
+    // Optimistic update
+    setDebts(prev => [localDebt, ...prev]);
+    await OfflineDB.put('debts', localDebt);
+    setIsDebtFormOpen(false);
 
-      // Reload debts to get fresh data
-      await loadDebts();
-      setIsDebtFormOpen(false);
-    } catch (error) {
-      console.error('Error adding debt:', error);
-      alert('Có lỗi khi thêm khoản nợ');
+    const supabasePayload = {
+      _tempId: tempId,
+      user_id: user.id,
+      type: newDebt.type,
+      person_name: newDebt.person_name,
+      original_amount: newDebt.original_amount,
+      created_date: newDebt.created_date,
+      due_date: newDebt.due_date || null,
+      description: newDebt.description || null,
+      status: 'pending',
+    };
+
+    if (navigator.onLine) {
+      try {
+        const { _tempId, ...serverData } = supabasePayload;
+        const { error } = await supabase.from('debts').insert([serverData]);
+        if (error) throw error;
+        await loadDebts(); // Reload to get server-generated IDs
+      } catch (error) {
+        console.error('Online insert failed, queuing:', error);
+        await SyncService.addToQueue({ table: 'debts', action: 'INSERT', data: supabasePayload });
+        await refreshPendingCount();
+      }
+    } else {
+      await SyncService.addToQueue({ table: 'debts', action: 'INSERT', data: supabasePayload });
+      await refreshPendingCount();
     }
   };
 
@@ -378,17 +668,25 @@ const App: React.FC = () => {
   const handleDeleteDebt = async (id: string) => {
     if (!user) return;
 
-    try {
-      const { error } = await supabase
-        .from('debts')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.id);
+    setDebts(prev => prev.filter(d => d.id !== id));
+    await OfflineDB.deleteById('debts', id);
 
-      if (error) throw error;
-      setDebts(prev => prev.filter(d => d.id !== id));
-    } catch (error) {
-      console.error('Error deleting debt:', error);
+    if (navigator.onLine && !id.startsWith('temp_')) {
+      try {
+        const { error } = await supabase
+          .from('debts')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', user.id);
+        if (error) throw error;
+      } catch (error) {
+        console.error('Online delete failed, queuing:', error);
+        await SyncService.addToQueue({ table: 'debts', action: 'DELETE', data: { id, user_id: user.id } });
+        await refreshPendingCount();
+      }
+    } else if (!id.startsWith('temp_')) {
+      await SyncService.addToQueue({ table: 'debts', action: 'DELETE', data: { id, user_id: user.id } });
+      await refreshPendingCount();
     }
   };
 
@@ -413,36 +711,47 @@ const App: React.FC = () => {
   // GIFT MONEY TRACKING FUNCTIONS
   // ============================================
 
-  // Load gifts from Supabase
+  // Load gifts — online: Supabase + cache; offline: IndexedDB
   const loadGifts = useCallback(async () => {
     if (!user) return;
 
     try {
-      const { data, error } = await supabase
-        .from('gift_records')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('event_date', { ascending: false });
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('gift_records')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('event_date', { ascending: false });
 
-      if (error) throw error;
+        if (error) throw error;
 
-      const mappedGifts: GiftRecord[] = (data || []).map(g => ({
-        id: g.id,
-        user_id: g.user_id,
-        direction: g.direction as GiftDirection,
-        person_name: g.person_name,
-        event_type: g.event_type as GiftEventType,
-        amount: parseFloat(g.amount),
-        event_date: g.event_date,
-        note: g.note || undefined
-      }));
+        const mappedGifts: GiftRecord[] = (data || []).map(g => ({
+          id: g.id,
+          user_id: g.user_id,
+          direction: g.direction as GiftDirection,
+          person_name: g.person_name,
+          event_type: g.event_type as GiftEventType,
+          amount: parseFloat(g.amount),
+          event_date: g.event_date,
+          note: g.note || undefined
+        }));
 
-      setGifts(mappedGifts);
+        setGifts(mappedGifts);
+        await OfflineDB.clearStore('gift_records');
+        await OfflineDB.putAll('gift_records', mappedGifts);
+      } else {
+        const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
+        setGifts(cached);
+      }
     } catch (error) {
       console.error('Error loading gifts:', error);
-      setGifts([]);
+      const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
+      setGifts(cached);
     }
   }, [user]);
+
+  // Keep ref in sync
+  loadGiftsRef.current = loadGifts;
 
   // Load gifts when user is authenticated
   useEffect(() => {
@@ -465,26 +774,47 @@ const App: React.FC = () => {
       return;
     }
 
-    try {
-      const { error } = await supabase
-        .from('gift_records')
-        .insert([{
-          user_id: user.id,
-          direction: newGift.direction,
-          person_name: newGift.person_name,
-          event_type: newGift.event_type,
-          amount: newGift.amount,
-          event_date: newGift.event_date,
-          note: newGift.note || null
-        }]);
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const localGift: GiftRecord = {
+      id: tempId,
+      user_id: user.id,
+      direction: newGift.direction,
+      person_name: newGift.person_name,
+      event_type: newGift.event_type,
+      amount: newGift.amount,
+      event_date: newGift.event_date,
+      note: newGift.note,
+    };
 
-      if (error) throw error;
+    setGifts(prev => [localGift, ...prev]);
+    await OfflineDB.put('gift_records', localGift);
+    setIsGiftFormOpen(false);
 
-      await loadGifts();
-      setIsGiftFormOpen(false);
-    } catch (error) {
-      console.error('Error adding gift:', error);
-      alert('Có lỗi khi thêm ghi nhớ');
+    const supabasePayload = {
+      _tempId: tempId,
+      user_id: user.id,
+      direction: newGift.direction,
+      person_name: newGift.person_name,
+      event_type: newGift.event_type,
+      amount: newGift.amount,
+      event_date: newGift.event_date,
+      note: newGift.note || null,
+    };
+
+    if (navigator.onLine) {
+      try {
+        const { _tempId, ...serverData } = supabasePayload;
+        const { error } = await supabase.from('gift_records').insert([serverData]);
+        if (error) throw error;
+        await loadGifts();
+      } catch (error) {
+        console.error('Online insert failed, queuing:', error);
+        await SyncService.addToQueue({ table: 'gift_records', action: 'INSERT', data: supabasePayload });
+        await refreshPendingCount();
+      }
+    } else {
+      await SyncService.addToQueue({ table: 'gift_records', action: 'INSERT', data: supabasePayload });
+      await refreshPendingCount();
     }
   };
 
@@ -492,17 +822,25 @@ const App: React.FC = () => {
   const handleDeleteGift = async (id: string) => {
     if (!user) return;
 
-    try {
-      const { error } = await supabase
-        .from('gift_records')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.id);
+    setGifts(prev => prev.filter(g => g.id !== id));
+    await OfflineDB.deleteById('gift_records', id);
 
-      if (error) throw error;
-      setGifts(prev => prev.filter(g => g.id !== id));
-    } catch (error) {
-      console.error('Error deleting gift:', error);
+    if (navigator.onLine && !id.startsWith('temp_')) {
+      try {
+        const { error } = await supabase
+          .from('gift_records')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', user.id);
+        if (error) throw error;
+      } catch (error) {
+        console.error('Online delete failed, queuing:', error);
+        await SyncService.addToQueue({ table: 'gift_records', action: 'DELETE', data: { id, user_id: user.id } });
+        await refreshPendingCount();
+      }
+    } else if (!id.startsWith('temp_')) {
+      await SyncService.addToQueue({ table: 'gift_records', action: 'DELETE', data: { id, user_id: user.id } });
+      await refreshPendingCount();
     }
   };
 
@@ -539,11 +877,49 @@ const App: React.FC = () => {
 
   // Show login screen if not authenticated
   if (!user) {
-    return <LoginScreen onLoginSuccess={() => loadTransactions()} />;
+    return <LoginScreen onLoginSuccess={() => loadTransactions()} isOnline={isOnline} />;
   }
 
   return (
     <div className="min-h-screen safe-bottom">
+      {/* Offline Banner */}
+      {!isOnline && (
+        <div className="bg-amber-500 text-white text-center py-2 px-4 text-sm font-medium flex items-center justify-center gap-2 sticky top-0 z-50">
+          <span>📡</span> Đang offline — dữ liệu sẽ đồng bộ khi có mạng
+          {pendingSyncCount > 0 && (
+            <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs">
+              {pendingSyncCount} chờ đồng bộ
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Syncing Banner */}
+      {isSyncing && (
+        <div className="bg-blue-500 text-white text-center py-2 px-4 text-sm font-medium flex items-center justify-center gap-2 sticky top-0 z-50">
+          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          Đang đồng bộ dữ liệu...
+        </div>
+      )}
+
+      {/* Sync Result Toast */}
+      {syncResult && (
+        <div className={`fixed top-4 right-4 z-[60] px-4 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 transition-all ${syncResult.failed > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+          }`}>
+          <span>{syncResult.failed > 0 ? '⚠️' : '✅'}</span>
+          <span>
+            Đã đồng bộ {syncResult.processed} mục
+            {syncResult.failed > 0 && ` (${syncResult.failed} lỗi)`}
+          </span>
+          <button onClick={dismissSyncResult} className="ml-2 hover:opacity-70">
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4">
@@ -677,6 +1053,10 @@ const App: React.FC = () => {
             transactions={transactions}
             budgets={budgets}
             onEditBudget={() => setIsBudgetModalOpen(true)}
+            onMonthClick={(yearMonth) => {
+              setFilterMonth(yearMonth);
+              setCurrentView('transactions');
+            }}
           />
         )}
 
@@ -774,71 +1154,99 @@ const App: React.FC = () => {
                 <div className="card overflow-hidden">
                   <div className="p-4 sm:p-6 border-b border-gray-100 flex justify-between items-center">
                     <h3 className="text-base sm:text-lg font-bold text-gray-800">Lịch sử giao dịch</h3>
-                    <span className="text-xs sm:text-sm text-gray-500">{transactions.length} giao dịch</span>
+                    <span className="text-xs sm:text-sm text-gray-500">
+                      {(() => {
+                        const filtered = filterMonth
+                          ? transactions.filter(t => t.date.startsWith(filterMonth))
+                          : transactions;
+                        return `${filtered.length} giao dịch`;
+                      })()}
+                    </span>
                   </div>
+                  {/* Month filter banner */}
+                  {filterMonth && (
+                    <div className="px-4 sm:px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
+                      <span className="text-sm text-blue-700 font-medium">
+                        📅 Tháng {parseInt(filterMonth.split('-')[1])}/{filterMonth.split('-')[0]}
+                      </span>
+                      <button
+                        onClick={() => setFilterMonth(null)}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-lg hover:bg-blue-100 transition-colors"
+                      >
+                        Xem tất cả ✕
+                      </button>
+                    </div>
+                  )}
                   <div>
-                    {transactions.length > 0 ? (
-                      (() => {
-                        const grouped: Record<string, typeof transactions> = {};
-                        transactions.forEach(tx => {
-                          if (!grouped[tx.date]) grouped[tx.date] = [];
-                          grouped[tx.date].push(tx);
-                        });
-                        return Object.entries(grouped).map(([date, txs]) => {
-                          const d = new Date(date);
-                          const formatted = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
-                          return (
-                            <div key={date}>
-                              <div className="sticky top-0 z-10 px-4 sm:px-6 py-2 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-                                <span className="text-xs sm:text-sm font-semibold text-gray-600">📅 {formatted}</span>
-                                <span className="text-xs text-gray-400">{txs.length} giao dịch</span>
-                              </div>
-                              <div className="divide-y divide-gray-50">
-                                {txs.map(tx => (
-                                  <div
-                                    key={tx.id}
-                                    className="transaction-item group cursor-pointer hover:bg-gray-50"
-                                    onClick={() => setSelectedTransaction(tx)}
-                                  >
-                                    <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
-                                      <div className={`w-10 h-10 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg ${tx.type === 'INCOME' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
-                                        }`}>
-                                        {tx.type === 'INCOME' ? '↓' : '↑'}
+                    {(() => {
+                      const displayTx = filterMonth
+                        ? transactions.filter(t => t.date.startsWith(filterMonth))
+                        : transactions;
+                      return displayTx.length > 0 ? (
+                        (() => {
+                          const grouped: Record<string, typeof transactions> = {};
+                          displayTx.forEach(tx => {
+                            if (!grouped[tx.date]) grouped[tx.date] = [];
+                            grouped[tx.date].push(tx);
+                          });
+                          return Object.entries(grouped).map(([date, txs]) => {
+                            const d = new Date(date);
+                            const formatted = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+                            return (
+                              <div key={date}>
+                                <div className="sticky top-0 z-10 px-4 sm:px-6 py-2 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+                                  <span className="text-xs sm:text-sm font-semibold text-gray-600">📅 {formatted}</span>
+                                  <span className="text-xs text-gray-400">{txs.length} giao dịch</span>
+                                </div>
+                                <div className="divide-y divide-gray-50">
+                                  {txs.map(tx => (
+                                    <div
+                                      key={tx.id}
+                                      className="transaction-item group cursor-pointer hover:bg-gray-50"
+                                      onClick={() => setSelectedTransaction(tx)}
+                                    >
+                                      <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
+                                        <div className={`w-10 h-10 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg ${tx.type === 'INCOME' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+                                          }`}>
+                                          {tx.type === 'INCOME' ? '↓' : '↑'}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <p className="font-semibold text-gray-800 text-sm sm:text-base truncate">{tx.category}</p>
+                                          <p className="text-xs text-gray-500 truncate">{tx.description || 'Không có ghi chú'}</p>
+                                        </div>
                                       </div>
-                                      <div className="min-w-0 flex-1">
-                                        <p className="font-semibold text-gray-800 text-sm sm:text-base truncate">{tx.category}</p>
-                                        <p className="text-xs text-gray-500 truncate">{tx.description || 'Không có ghi chú'}</p>
+                                      <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
+                                        <p className={`font-bold text-right text-sm sm:text-base ${tx.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'
+                                          }`}>
+                                          {tx.type === 'INCOME' ? '+' : '-'}{tx.amount.toLocaleString('vi-VN')}
+                                        </p>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
+                                          className="transaction-delete-btn text-gray-300 hover:text-rose-500 transition-all touch-target flex items-center justify-center"
+                                          aria-label="Xóa giao dịch"
+                                        >
+                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                          </svg>
+                                        </button>
                                       </div>
                                     </div>
-                                    <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
-                                      <p className={`font-bold text-right text-sm sm:text-base ${tx.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'
-                                        }`}>
-                                        {tx.type === 'INCOME' ? '+' : '-'}{tx.amount.toLocaleString('vi-VN')}
-                                      </p>
-                                      <button
-                                        onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
-                                        className="transaction-delete-btn text-gray-300 hover:text-rose-500 transition-all touch-target flex items-center justify-center"
-                                        aria-label="Xóa giao dịch"
-                                      >
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                        </svg>
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        });
-                      })()
-                    ) : (
-                      <div className="p-8 sm:p-12 text-center text-gray-400">
-                        <div className="text-4xl mb-3">📊</div>
-                        <p className="text-sm sm:text-base">Bạn chưa có giao dịch nào.</p>
-                        <p className="text-xs sm:text-sm mt-1">Hãy nhấn nút bên dưới để thêm mới!</p>
-                      </div>
-                    )}
+                            );
+                          });
+                        })()
+                      ) : (
+                        <div className="p-8 sm:p-12 text-center text-gray-400">
+                          <div className="text-4xl mb-3">📊</div>
+                          <p className="text-sm sm:text-base">
+                            {filterMonth ? 'Không có giao dịch trong tháng này' : 'Bạn chưa có giao dịch nào.'}
+                          </p>
+                          {!filterMonth && <p className="text-xs sm:text-sm mt-1">Hãy nhấn nút bên dưới để thêm mới!</p>}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 

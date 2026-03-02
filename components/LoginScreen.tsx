@@ -3,9 +3,10 @@ import { supabase } from '../services/supabase.service';
 
 interface LoginScreenProps {
     onLoginSuccess: () => void;
+    isOnline?: boolean;
 }
 
-const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, isOnline = true }) => {
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -118,6 +119,13 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                         </div>
                     )}
 
+                    {/* Offline Warning */}
+                    {!isOnline && (
+                        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 text-sm flex items-center gap-2">
+                            <span>📡</span> Cần internet để đăng nhập. Vui lòng kiểm tra kết nối mạng.
+                        </div>
+                    )}
+
                     {/* Form */}
                     <form onSubmit={handleSubmit} className="space-y-4">
                         {!isLogin && (
@@ -167,7 +175,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
                         <button
                             type="submit"
-                            disabled={loading}
+                            disabled={loading || !isOnline}
                             className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {loading ? (
@@ -199,7 +207,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                     {/* Social Login */}
                     <button
                         onClick={handleGoogleLogin}
-                        disabled={loading}
+                        disabled={loading || !isOnline}
                         className="w-full py-3 bg-white border border-gray-200 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
                     >
                         <svg className="w-5 h-5" viewBox="0 0 24 24">

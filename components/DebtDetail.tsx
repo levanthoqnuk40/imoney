@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Debt, DebtPayment } from '../types';
 import { supabase } from '../services/supabase.service';
+import * as OfflineDB from '../services/offline.service';
+import * as SyncService from '../services/sync.service';
 
 interface DebtDetailProps {
     debt: Debt;
@@ -35,23 +37,37 @@ const DebtDetail: React.FC<DebtDetailProps> = ({ debt, onClose, onUpdate, onDele
     useEffect(() => {
         const loadPayments = async () => {
             try {
-                const { data, error } = await supabase
-                    .from('debt_payments')
-                    .select('*')
-                    .eq('debt_id', debt.id)
-                    .order('payment_date', { ascending: false });
+                if (navigator.onLine) {
+                    const { data, error } = await supabase
+                        .from('debt_payments')
+                        .select('*')
+                        .eq('debt_id', debt.id)
+                        .order('payment_date', { ascending: false });
 
-                if (error) throw error;
+                    if (error) throw error;
 
-                setPayments(data.map(p => ({
-                    id: p.id,
-                    debt_id: p.debt_id,
-                    amount: parseFloat(p.amount),
-                    payment_date: p.payment_date,
-                    note: p.note
-                })));
+                    const mapped = data.map(p => ({
+                        id: p.id,
+                        debt_id: p.debt_id,
+                        amount: parseFloat(p.amount),
+                        payment_date: p.payment_date,
+                        note: p.note
+                    }));
+                    setPayments(mapped);
+                    // Cache payments in IndexedDB
+                    for (const p of mapped) {
+                        await OfflineDB.put('debt_payments', p);
+                    }
+                } else {
+                    // Offline: filter from IndexedDB
+                    const all = await OfflineDB.getAll<DebtPayment>('debt_payments');
+                    setPayments(all.filter(p => p.debt_id === debt.id));
+                }
             } catch (error) {
                 console.error('Error loading payments:', error);
+                // Fallback to IndexedDB
+                const all = await OfflineDB.getAll<DebtPayment>('debt_payments');
+                setPayments(all.filter(p => p.debt_id === debt.id));
             } finally {
                 setIsLoadingPayments(false);
             }
@@ -70,17 +86,38 @@ const DebtDetail: React.FC<DebtDetailProps> = ({ debt, onClose, onUpdate, onDele
         }
 
         setIsSubmitting(true);
-        try {
-            const { error } = await supabase
-                .from('debt_payments')
-                .insert([{
-                    debt_id: debt.id,
-                    amount: amount,
-                    payment_date: paymentDate,
-                    note: paymentNote.trim() || null
-                }]);
 
-            if (error) throw error;
+        const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        const localPayment: DebtPayment = {
+            id: tempId,
+            debt_id: debt.id,
+            amount,
+            payment_date: paymentDate,
+            note: paymentNote.trim() || undefined,
+        };
+
+        // Optimistic update
+        setPayments(prev => [localPayment, ...prev]);
+        await OfflineDB.put('debt_payments', localPayment);
+
+        const supabasePayload = {
+            _tempId: tempId,
+            debt_id: debt.id,
+            amount,
+            payment_date: paymentDate,
+            note: paymentNote.trim() || null,
+        };
+
+        try {
+            if (navigator.onLine) {
+                const { _tempId, ...serverData } = supabasePayload;
+                const { error } = await supabase
+                    .from('debt_payments')
+                    .insert([serverData]);
+                if (error) throw error;
+            } else {
+                await SyncService.addToQueue({ table: 'debt_payments', action: 'INSERT', data: supabasePayload });
+            }
 
             // Refresh data
             onUpdate();
@@ -89,7 +126,7 @@ const DebtDetail: React.FC<DebtDetailProps> = ({ debt, onClose, onUpdate, onDele
             setPaymentNote('');
         } catch (error) {
             console.error('Error adding payment:', error);
-            alert('Có lỗi khi ghi nhận thanh toán');
+            await SyncService.addToQueue({ table: 'debt_payments', action: 'INSERT', data: supabasePayload });
         } finally {
             setIsSubmitting(false);
         }
@@ -199,8 +236,8 @@ const DebtDetail: React.FC<DebtDetailProps> = ({ debt, onClose, onUpdate, onDele
                         <button
                             onClick={() => setShowPaymentForm(true)}
                             className={`w-full py-3 rounded-xl font-semibold text-white transition-all ${isReceivable
-                                    ? 'bg-emerald-600 hover:bg-emerald-700'
-                                    : 'bg-rose-600 hover:bg-rose-700'
+                                ? 'bg-emerald-600 hover:bg-emerald-700'
+                                : 'bg-rose-600 hover:bg-rose-700'
                                 }`}
                         >
                             💰 Ghi nhận thanh toán
