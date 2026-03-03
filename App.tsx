@@ -20,6 +20,8 @@ import { COLORS, GIFT_EVENT_TYPES } from './constants';
 import { User } from '@supabase/supabase-js';
 import * as OfflineDB from './services/offline.service';
 import * as SyncService from './services/sync.service';
+import * as NotificationService from './services/notification.service';
+import { NotificationAlert } from './services/notification.service';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
 
 const App: React.FC = () => {
@@ -53,6 +55,10 @@ const App: React.FC = () => {
 
   // Pending sync count for UI badge
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
+
+  // Notification bell panel state
+  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
+  const notificationPanelRef = React.useRef<HTMLDivElement>(null);
 
   // Refresh pending count helper
   const refreshPendingCount = useCallback(async () => {
@@ -98,6 +104,8 @@ const App: React.FC = () => {
           // Cache session for offline use
           await OfflineDB.cacheAuthSession(session.user, session);
           setAuthLoading(false);
+          // Initialize local notifications
+          await NotificationService.initNotifications();
           return;
         }
       } catch {
@@ -114,6 +122,8 @@ const App: React.FC = () => {
             email: cached.email,
             user_metadata: { full_name: cached.fullName },
           } as User);
+          // Initialize local notifications even offline
+          await NotificationService.initNotifications();
         }
       }
       setAuthLoading(false);
@@ -201,6 +211,12 @@ const App: React.FC = () => {
       refreshPendingCount();
     }
   }, [user, loadTransactions, refreshPendingCount]);
+
+  // Reschedule all notifications when data changes
+  useEffect(() => {
+    if (!user || isLoading) return;
+    NotificationService.rescheduleAll(debts, budgets, transactions);
+  }, [user, debts, budgets, transactions, isLoading]);
 
   // Realtime subscription: auto-update when Sepay webhook creates new transactions
   useEffect(() => {
@@ -861,6 +877,25 @@ const App: React.FC = () => {
     return { given, received, net: received - given };
   }, [gifts]);
 
+  // Compute active notification alerts for bell icon
+  const activeAlerts = useMemo<NotificationAlert[]>(() => {
+    if (!user) return [];
+    return NotificationService.getActiveAlerts(debts, budgets, transactions);
+  }, [user, debts, budgets, transactions]);
+
+  // Close notification panel on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (notificationPanelRef.current && !notificationPanelRef.current.contains(e.target as Node)) {
+        setIsNotificationPanelOpen(false);
+      }
+    };
+    if (isNotificationPanelOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isNotificationPanelOpen]);
+
   // Show loading while checking auth
   if (authLoading) {
     return (
@@ -945,6 +980,73 @@ const App: React.FC = () => {
                 </svg>
                 <span className="hidden sm:inline">{isAiLoading ? 'Đang phân tích...' : 'Phân tích AI'}</span>
               </button>
+
+              {/* Notification Bell */}
+              <div className="relative" ref={notificationPanelRef}>
+                <button
+                  onClick={() => setIsNotificationPanelOpen(prev => !prev)}
+                  className="relative p-2 rounded-xl hover:bg-gray-100 transition-colors touch-target"
+                  aria-label="Thông báo"
+                >
+                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                  {activeAlerts.length > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+                      {activeAlerts.length > 9 ? '9+' : activeAlerts.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Notification Dropdown Panel */}
+                {isNotificationPanelOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-gray-100 z-50 overflow-hidden">
+                    <div className="px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+                      <h3 className="font-semibold text-sm">🔔 Thông báo</h3>
+                      <p className="text-xs text-blue-100">{activeAlerts.length > 0 ? `${activeAlerts.length} cảnh báo` : 'Không có cảnh báo'}</p>
+                    </div>
+
+                    <div className="max-h-80 overflow-y-auto">
+                      {activeAlerts.length === 0 ? (
+                        <div className="px-4 py-8 text-center">
+                          <span className="text-3xl block mb-2">✅</span>
+                          <p className="text-sm text-gray-500">Tất cả đều ổn!</p>
+                          <p className="text-xs text-gray-400 mt-1">Không có nợ đến hạn hay ngân sách vượt mức</p>
+                        </div>
+                      ) : (
+                        activeAlerts.map((alert) => (
+                          <div
+                            key={alert.id}
+                            className={`px-4 py-3 border-b border-gray-50 last:border-b-0 flex items-start gap-3 ${alert.severity === 'danger' ? 'bg-rose-50/50' : 'bg-amber-50/30'
+                              }`}
+                          >
+                            <span className="text-lg mt-0.5 flex-shrink-0">{alert.icon}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-sm font-semibold ${alert.severity === 'danger' ? 'text-rose-700' : 'text-amber-700'
+                                }`}>
+                                {alert.title}
+                              </p>
+                              <p className="text-xs text-gray-500 mt-0.5 truncate">{alert.body}</p>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex-shrink-0 ${alert.severity === 'danger'
+                                ? 'bg-rose-100 text-rose-600'
+                                : 'bg-amber-100 text-amber-600'
+                              }`}>
+                              {alert.type.includes('debt') ? 'Nợ' : 'NS'}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {activeAlerts.length > 0 && (
+                      <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
+                        <p className="text-[10px] text-gray-400 text-center">Thông báo sẽ được gửi lúc 6:00 AM và 6:00 PM</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* User Menu */}
               <div className="relative group">
