@@ -1774,6 +1774,7 @@ const App: React.FC = () => {
         <GiftForm
           onSubmit={handleAddGift}
           onClose={() => setIsGiftFormOpen(false)}
+          allGifts={gifts}
         />
       )}
 

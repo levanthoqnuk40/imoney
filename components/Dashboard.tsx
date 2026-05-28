@@ -132,6 +132,48 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
         };
     }, [transactions, currentMonth, currentYear, totals]);
 
+    // Phân tích quy tắc tài chính 50/30/20
+    const rule503020 = useMemo(() => {
+        let needsActual = 0;
+        let wantsActual = 0;
+        
+        monthlyTransactions.forEach(t => {
+            if (t.type === 'EXPENSE') {
+                if (['Nhà ở', 'Ăn uống', 'Di chuyển', 'Sức khỏe', 'Giáo dục'].includes(t.category)) {
+                    needsActual += t.amount;
+                } else {
+                    wantsActual += t.amount;
+                }
+            }
+        });
+
+        const totalIncome = totals.income;
+        const totalExpenses = needsActual + wantsActual;
+        const savingsActual = Math.max(0, totalIncome - totalExpenses);
+
+        const needsTarget = totalIncome * 0.5;
+        const wantsTarget = totalIncome * 0.3;
+        const savingsTarget = totalIncome * 0.2;
+
+        const needsPercent = totalIncome > 0 ? (needsActual / totalIncome) * 100 : 0;
+        const wantsPercent = totalIncome > 0 ? (wantsActual / totalIncome) * 100 : 0;
+        const savingsPercent = totalIncome > 0 ? (savingsActual / totalIncome) * 100 : 0;
+
+        return {
+            totalIncome,
+            needsActual,
+            needsTarget,
+            needsPercent,
+            wantsActual,
+            wantsTarget,
+            wantsPercent,
+            savingsActual,
+            savingsTarget,
+            savingsPercent,
+            hasData: totalIncome > 0 || totalExpenses > 0
+        };
+    }, [monthlyTransactions, totals.income]);
+
     return (
         <div className="space-y-6">
             {/* Summary Cards Row */}
@@ -215,6 +257,165 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                     )}
                 </div>
             )}
+
+            {/* Phân tích quy tắc 50/30/20 */}
+            <div className="card p-4 sm:p-6 bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
+                    <div>
+                        <h3 className="text-base sm:text-lg font-bold text-slate-800 flex items-center gap-2">
+                            <span>🎯</span> Quy tắc phân bổ tài chính 50/30/20
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                            Phương pháp quản lý dòng tiền cá nhân tiêu chuẩn quốc tế giúp bạn cân bằng cuộc sống và tích lũy bền vững.
+                        </p>
+                    </div>
+                    {rule503020.hasData && (
+                        <span className="self-start sm:self-center bg-slate-200 text-slate-700 text-xs px-2.5 py-1 rounded-full font-semibold">
+                            Thu nhập áp dụng: {rule503020.totalIncome.toLocaleString('vi-VN')}đ
+                        </span>
+                    )}
+                </div>
+
+                {!rule503020.hasData ? (
+                    <div className="text-center py-6 text-slate-400 text-sm italic">
+                        Hãy thêm giao dịch thu nhập và chi tiêu của tháng này để phân tích theo quy tắc 50/30/20.
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* 50% Needs */}
+                        <div className="bg-white rounded-2xl p-4 border border-slate-100 flex flex-col justify-between shadow-sm">
+                            <div>
+                                <div className="flex justify-between items-start mb-2">
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 text-sm">Thiết yếu (Needs)</h4>
+                                        <p className="text-[10px] text-slate-400">Ăn uống, Nhà ở, Đi lại, Sức khỏe, Học tập</p>
+                                    </div>
+                                    <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                        Mục tiêu: 50%
+                                    </span>
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="flex justify-between text-xs font-semibold">
+                                        <span className="text-slate-600">Thực tế: {rule503020.needsPercent.toFixed(1)}%</span>
+                                        <span className={rule503020.needsPercent <= 50 ? 'text-emerald-600' : 'text-rose-600'}>
+                                            {rule503020.needsActual.toLocaleString('vi-VN')}đ
+                                        </span>
+                                    </div>
+                                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                        <div
+                                            className={`h-full rounded-full transition-all ${
+                                                rule503020.needsPercent <= 50 ? 'bg-blue-500' : 'bg-rose-500'
+                                            }`}
+                                            style={{ width: `${Math.min(rule503020.needsPercent * 2, 100)}%` }}
+                                        />
+                                    </div>
+                                    <p className="text-[10px] text-slate-400">
+                                        Hạn mức tối đa đề xuất: {rule503020.needsTarget.toLocaleString('vi-VN')}đ
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+                                <span className="text-[10px] text-slate-500 font-medium">Trạng thái:</span>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                    rule503020.needsPercent <= 50 
+                                        ? 'bg-emerald-50 text-emerald-600' 
+                                        : 'bg-rose-50 text-rose-600'
+                                }`}>
+                                    {rule503020.needsPercent <= 50 ? '✓ Tốt' : '⚠ Cần tối ưu'}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* 30% Wants */}
+                        <div className="bg-white rounded-2xl p-4 border border-slate-100 flex flex-col justify-between shadow-sm">
+                            <div>
+                                <div className="flex justify-between items-start mb-2">
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 text-sm">Sở thích (Wants)</h4>
+                                        <p className="text-[10px] text-slate-400">Mua sắm, Giải trí, Chuyển tiền đi, Khác</p>
+                                    </div>
+                                    <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                        Mục tiêu: 30%
+                                    </span>
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="flex justify-between text-xs font-semibold">
+                                        <span className="text-slate-600">Thực tế: {rule503020.wantsPercent.toFixed(1)}%</span>
+                                        <span className={rule503020.wantsPercent <= 30 ? 'text-emerald-600' : 'text-rose-600'}>
+                                            {rule503020.wantsActual.toLocaleString('vi-VN')}đ
+                                        </span>
+                                    </div>
+                                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                        <div
+                                            className={`h-full rounded-full transition-all ${
+                                                rule503020.wantsPercent <= 30 ? 'bg-amber-500' : 'bg-rose-500'
+                                            }`}
+                                            style={{ width: `${Math.min(rule503020.wantsPercent * 3.33, 100)}%` }}
+                                        />
+                                    </div>
+                                    <p className="text-[10px] text-slate-400">
+                                        Hạn mức tối đa đề xuất: {rule503020.wantsTarget.toLocaleString('vi-VN')}đ
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+                                <span className="text-[10px] text-slate-500 font-medium">Trạng thái:</span>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                    rule503020.wantsPercent <= 30 
+                                        ? 'bg-emerald-50 text-emerald-600' 
+                                        : 'bg-rose-50 text-rose-600'
+                                }`}>
+                                    {rule503020.wantsPercent <= 30 ? '✓ Tốt' : '⚠ Vượt chi tiêu'}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* 20% Savings */}
+                        <div className="bg-white rounded-2xl p-4 border border-slate-100 flex flex-col justify-between shadow-sm">
+                            <div>
+                                <div className="flex justify-between items-start mb-2">
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 text-sm">Tích lũy (Savings)</h4>
+                                        <p className="text-[10px] text-slate-400">Dư thu nhập trừ chi tiêu để tích luỹ/đầu tư</p>
+                                    </div>
+                                    <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                        Mục tiêu: ≥ 20%
+                                    </span>
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="flex justify-between text-xs font-semibold">
+                                        <span className="text-slate-600">Thực tế: {rule503020.savingsPercent.toFixed(1)}%</span>
+                                        <span className={rule503020.savingsPercent >= 20 ? 'text-emerald-600' : 'text-amber-600'}>
+                                            {rule503020.savingsActual.toLocaleString('vi-VN')}đ
+                                        </span>
+                                    </div>
+                                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                        <div
+                                            className={`h-full rounded-full transition-all ${
+                                                rule503020.savingsPercent >= 20 ? 'bg-emerald-500' : 'bg-amber-400'
+                                            }`}
+                                            style={{ width: `${Math.min(rule503020.savingsPercent * 5, 100)}%` }}
+                                        />
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">
+                                        Mục tiêu đề xuất: {rule503020.savingsTarget.toLocaleString('vi-VN')}đ
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+                                <span className="text-[10px] text-slate-500 font-medium">Trạng thái:</span>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                    rule503020.savingsPercent >= 20 
+                                        ? 'bg-emerald-50 text-emerald-600' 
+                                        : 'bg-amber-50 text-amber-600'
+                                }`}>
+                                    {rule503020.savingsPercent >= 20 ? '✓ Đạt chỉ tiêu' : '⚠ Cần tăng tích lũy'}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
 
             {/* Budget Progress */}
             <div>

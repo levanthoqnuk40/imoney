@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GiftDirection, GiftEventType } from '../types';
+import { GiftDirection, GiftEventType, GiftRecord } from '../types';
 import { GIFT_EVENT_TYPES } from '../constants';
 
 interface GiftFormProps {
@@ -12,13 +12,14 @@ interface GiftFormProps {
         note?: string;
     }) => void;
     onClose: () => void;
+    allGifts?: GiftRecord[];
 }
 
 /**
  * GiftForm Component
  * Form modal để thêm khoản tiền ghi nhớ
  */
-const GiftForm: React.FC<GiftFormProps> = ({ onSubmit, onClose }) => {
+const GiftForm: React.FC<GiftFormProps> = ({ onSubmit, onClose, allGifts }) => {
     const [direction, setDirection] = useState<GiftDirection>('given');
     const [personName, setPersonName] = useState('');
     const [eventType, setEventType] = useState<GiftEventType>('wedding');
@@ -26,6 +27,59 @@ const GiftForm: React.FC<GiftFormProps> = ({ onSubmit, onClose }) => {
     const [eventDate, setEventDate] = useState(new Date().toISOString().split('T')[0]);
     const [note, setNote] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Tra cứu lịch sử đối ngoại cho tính năng "Gợi ý trả lễ"
+    const reciprocityInfo = React.useMemo(() => {
+        if (!allGifts || personName.trim().length < 2) return null;
+        const searchName = personName.trim().toLowerCase();
+        
+        // Lọc các bản ghi khớp với tên (tìm kiếm chứa ký tự không phân biệt hoa thường)
+        const matches = allGifts.filter(g => 
+            g.person_name.toLowerCase().includes(searchName)
+        );
+        
+        if (matches.length === 0) return null;
+        
+        // Tính toán gợi ý số tiền đối ngoại dựa trên lịch sử
+        // Ưu tiên lịch sử mà họ đi tiền mình (received) để trả lễ (given) hoặc ngược lại
+        const relevantReceived = matches.filter(g => g.direction === 'received');
+        const relevantGiven = matches.filter(g => g.direction === 'given');
+        
+        let suggestionAmount = 0;
+        let suggestionReason = '';
+        
+        if (direction === 'given') {
+            // Nếu mình đang đi tiền họ, tìm xem họ đã từng mừng mình chưa
+            if (relevantReceived.length > 0) {
+                // Lấy giao dịch gần nhất
+                const lastReceived = relevantReceived[0];
+                suggestionAmount = lastReceived.amount;
+                suggestionReason = `Họ đã từng mừng bạn ${lastReceived.amount.toLocaleString('vi-VN')}đ vào ngày ${new Date(lastReceived.event_date).toLocaleDateString('vi-VN')} (${GIFT_EVENT_TYPES[lastReceived.event_type]?.label || lastReceived.event_type})`;
+            } else if (relevantGiven.length > 0) {
+                // Nếu họ chưa mừng mình, nhưng mình đã từng mừng họ trong quá khứ
+                const lastGiven = relevantGiven[0];
+                suggestionAmount = lastGiven.amount;
+                suggestionReason = `Bạn đã từng mừng họ ${lastGiven.amount.toLocaleString('vi-VN')}đ vào ngày ${new Date(lastGiven.event_date).toLocaleDateString('vi-VN')} (${GIFT_EVENT_TYPES[lastGiven.event_type]?.label || lastGiven.event_type})`;
+            }
+        } else {
+            // Nếu mình đang nhận tiền của họ, xem mình đã mừng họ bao nhiêu để đối chiếu
+            if (relevantGiven.length > 0) {
+                const lastGiven = relevantGiven[0];
+                suggestionAmount = lastGiven.amount;
+                suggestionReason = `Bạn đã từng mừng họ ${lastGiven.amount.toLocaleString('vi-VN')}đ vào ngày ${new Date(lastGiven.event_date).toLocaleDateString('vi-VN')} (${GIFT_EVENT_TYPES[lastGiven.event_type]?.label || lastGiven.event_type})`;
+            } else if (relevantReceived.length > 0) {
+                const lastReceived = relevantReceived[0];
+                suggestionAmount = lastReceived.amount;
+                suggestionReason = `Họ đã từng mừng bạn ${lastReceived.amount.toLocaleString('vi-VN')}đ vào ngày ${new Date(lastReceived.event_date).toLocaleDateString('vi-VN')} (${GIFT_EVENT_TYPES[lastReceived.event_type]?.label || lastReceived.event_type})`;
+            }
+        }
+        
+        return {
+            matches,
+            suggestionAmount,
+            suggestionReason
+        };
+    }, [allGifts, personName, direction]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -136,6 +190,53 @@ const GiftForm: React.FC<GiftFormProps> = ({ onSubmit, onClose }) => {
                             required
                         />
                     </div>
+
+                    {/* Gợi ý trả lễ đối ngoại dựa trên lịch sử */}
+                    {reciprocityInfo && (
+                        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100 rounded-xl p-3 text-xs text-indigo-900 space-y-2 animate-fade-in">
+                            <div className="flex items-center gap-1 font-semibold text-indigo-950">
+                                <span>💡 Lịch sử & Gợi ý đối ngoại:</span>
+                            </div>
+                            
+                            {reciprocityInfo.suggestionReason && (
+                                <div className="text-indigo-800">
+                                    <p>{reciprocityInfo.suggestionReason}.</p>
+                                    {reciprocityInfo.suggestionAmount > 0 && (
+                                        <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                                            <span>👉 Gợi ý đi lễ: <strong className="text-indigo-950 text-sm font-bold">{reciprocityInfo.suggestionAmount.toLocaleString('vi-VN')}đ</strong></span>
+                                            <button 
+                                                type="button"
+                                                onClick={() => setAmount(reciprocityInfo.suggestionAmount.toString())}
+                                                className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors text-[10px]"
+                                            >
+                                                Áp dụng gợi ý
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            <div className="pt-2 border-t border-indigo-100/50">
+                                <p className="font-semibold mb-1 text-indigo-950">Lịch sử đối ngoại ({reciprocityInfo.matches.length}):</p>
+                                <div className="max-h-24 overflow-y-auto space-y-1 divide-y divide-indigo-100/30">
+                                    {reciprocityInfo.matches.slice(0, 3).map(g => (
+                                        <div key={g.id} className="flex justify-between items-center py-1">
+                                            <span>
+                                                {g.direction === 'given' ? '📤 Bạn mừng: ' : '📥 Họ mừng: '}
+                                                {GIFT_EVENT_TYPES[g.event_type]?.icon || '🎉'} {GIFT_EVENT_TYPES[g.event_type]?.label || g.event_type}
+                                            </span>
+                                            <span className="font-medium text-indigo-950">
+                                                {g.amount.toLocaleString('vi-VN')}đ ({new Date(g.event_date).getFullYear()})
+                                            </span>
+                                        </div>
+                                    ))}
+                                    {reciprocityInfo.matches.length > 3 && (
+                                        <p className="text-[10px] text-indigo-500 text-center pt-1">và {reciprocityInfo.matches.length - 3} lần khác...</p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Amount */}
                     <div>
