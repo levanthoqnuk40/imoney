@@ -9,6 +9,87 @@ interface TransactionFormProps {
   onClose: () => void;
 }
 
+const removeAccents = (str: string): string => {
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'd')
+    .toLowerCase();
+};
+
+const KEYWORD_MAP: Record<string, { type: TransactionType; category: string; keywords: string[] }> = {
+  'Lương': {
+    type: 'INCOME',
+    category: 'Lương',
+    keywords: ['luong', 'salary', 'thu nhap', 'payroll', 'paycheck', 'chuyen khoan luong', 'chuyen khoan nhan luong']
+  },
+  'Thưởng': {
+    type: 'INCOME',
+    category: 'Thưởng',
+    keywords: ['thuong', 'bonus', 'commission', 'hoa hong']
+  },
+  'Đầu tư': {
+    type: 'INCOME',
+    category: 'Đầu tư',
+    keywords: ['co phieu', 'stock', 'lai dau tu', 'crypto', 'coin', 'dividend', 'co tuc']
+  },
+  'Kinh doanh': {
+    type: 'INCOME',
+    category: 'Kinh doanh',
+    keywords: ['ban hang', 'kinh doanh', 'doanh thu', 'revenue', 'khach hang thanh toan', 'tien hang']
+  },
+  'Ăn uống': {
+    type: 'EXPENSE',
+    category: 'Ăn uống',
+    keywords: ['cafe', 'coffee', 'starbucks', 'highlands', 'an uong', 'an sang', 'an toi', 'an trua', 'nha hang', 'tra sua', 'gong cha', 'dingtea', 'phuc long', 'kfc', 'lotteria', 'mcdonald', 'pizza', 'lau', 'nuong', 'com', 'pho', 'bun', 'grocery', 'cho', 'sieu thi', 'coopmart', 'winmart', 'bachhoa', 'foody', 'shopeefood', 'grabfood', 'baemin']
+  },
+  'Di chuyển': {
+    type: 'EXPENSE',
+    category: 'Di chuyển',
+    keywords: ['xang', 'gas', 'petrol', 'grab', 'be ', 'gojek', 'taxi', 've xe', 've tau', 've may bay', 'airline', 'xe bus', 'gui xe', 'do xe', 'bao duong xe', 'sua xe']
+  },
+  'Nhà ở': {
+    type: 'EXPENSE',
+    category: 'Nhà ở',
+    keywords: ['tien nha', 'tien phong', 'thue nha', 'nha o', 'dien nuoc', 'tien dien', 'tien nuoc', 'internet', 'wifi', 'chung cu', 'phi quan ly', 'phi dich vu', 'sua nha']
+  },
+  'Giải trí': {
+    type: 'EXPENSE',
+    category: 'Giải trí',
+    keywords: ['netflix', 'spotify', 'youtube premium', 'rap phim', 'cgv', 'lotte cinema', 'xem phim', 'du lich', 'travel', 'khach san', 'hotel', 've may bay du lich', 've tham quan', 'karaoke', 'bar', 'club', 'game', 'nap game', 'steam', 'playstation', 'nintendo', 'concert']
+  },
+  'Mua sắm': {
+    type: 'EXPENSE',
+    category: 'Mua sắm',
+    keywords: ['mua sam', 'shopee', 'lazada', 'tiki', 'shopping', 'quan ao', 'giay dep', 'quan jean', 'ao thun', 'ao khoac', 'tui xach', 'my pham', 'makeup', 'skincare', 'dien thoai', 'laptop', 'ipad', 'phu kien', 'tivi', 'tu lanh', 'gia dung']
+  },
+  'Sức khỏe': {
+    type: 'EXPENSE',
+    category: 'Sức khỏe',
+    keywords: ['thuoc', 'pharmacy', 'nha thuoc', 'benh vien', 'hospital', 'kham benh', 'nha khoa', 'rang', 'phong kham', 'bao hiem', 'insurance', 'gym', 'california fitness', 'fitness', 'yoga', 'spa', 'massage']
+  },
+  'Giáo dục': {
+    type: 'EXPENSE',
+    category: 'Giáo dục',
+    keywords: ['hoc phi', 'tuition', 'khoa hoc', 'course', 'tieng anh', 'ielts', 'toeic', 'sach', 'book', 'van phong pham', 'dung cu hoc tap', 'truong hoc', 'dai hoc', 'udemy', 'coursera']
+  }
+};
+
+const autoCategorize = (desc: string): { type: TransactionType; category: string } | null => {
+  const cleanDesc = removeAccents(desc);
+  for (const catName of Object.keys(KEYWORD_MAP)) {
+    const item = KEYWORD_MAP[catName];
+    for (const keyword of item.keywords) {
+      const cleanKeyword = removeAccents(keyword);
+      if (cleanDesc.includes(cleanKeyword)) {
+        return { type: item.type, category: item.category };
+      }
+    }
+  }
+  return null;
+};
+
 const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => {
   const [type, setType] = useState<TransactionType>('EXPENSE');
   const [amount, setAmount] = useState('');
@@ -18,6 +99,18 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [hasManuallySelected, setHasManuallySelected] = useState(false);
+
+  const handleDescriptionChange = (val: string) => {
+    setDescription(val);
+    if (!hasManuallySelected && val.trim().length > 1) {
+      const result = autoCategorize(val);
+      if (result) {
+        setType(result.type);
+        setCategory(result.category);
+      }
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -112,7 +205,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
           <div className="flex bg-gray-100 p-1 rounded-xl">
             <button
               type="button"
-              onClick={() => { setType('EXPENSE'); setCategory(EXPENSE_CATEGORIES[0]); }}
+              onClick={() => { setType('EXPENSE'); setCategory(EXPENSE_CATEGORIES[0]); setHasManuallySelected(true); }}
               className={`flex-1 py-3 sm:py-2 text-sm font-medium rounded-lg transition-all touch-target ${type === 'EXPENSE' ? 'bg-white text-rose-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                 }`}
             >
@@ -120,7 +213,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
             </button>
             <button
               type="button"
-              onClick={() => { setType('INCOME'); setCategory(INCOME_CATEGORIES[0]); }}
+              onClick={() => { setType('INCOME'); setCategory(INCOME_CATEGORIES[0]); setHasManuallySelected(true); }}
               className={`flex-1 py-3 sm:py-2 text-sm font-medium rounded-lg transition-all touch-target ${type === 'INCOME' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                 }`}
             >
@@ -152,7 +245,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
             <label className="block text-sm font-medium text-gray-700 mb-2">Danh mục</label>
             <select
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={(e) => { setCategory(e.target.value); setHasManuallySelected(true); }}
               className="w-full px-4 py-3 sm:py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-base appearance-none bg-white"
             >
               {(type === 'EXPENSE' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES).map(cat => (
@@ -179,10 +272,16 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
             <input
               type="text"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => handleDescriptionChange(e.target.value)}
               className="w-full px-4 py-3 sm:py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-base"
               placeholder="VD: Mua cafe sáng"
             />
+            {/* Auto-categorization alert badge */}
+            {!hasManuallySelected && description.trim().length > 1 && autoCategorize(description) && (
+              <p className="text-xs text-blue-600 mt-1.5 flex items-center gap-1 animate-pulse">
+                <span>💡</span> Tự động nhận diện danh mục: <strong className="text-blue-700 font-bold">{autoCategorize(description)?.category}</strong>
+              </p>
+            )}
           </div>
 
           {/* Receipt Upload */}
