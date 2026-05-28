@@ -45,7 +45,7 @@ const App: React.FC = () => {
   const [debts, setDebts] = useState<Debt[]>([]);
   const [isDebtFormOpen, setIsDebtFormOpen] = useState(false);
   const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
-  const [debtFilter, setDebtFilter] = useState<'all' | 'receivable' | 'payable'>('all');
+  const [debtFilter, setDebtFilter] = useState<'all' | 'receivable' | 'payable' | 'completed'>('all');
 
   // Gift money tracking state
   const [gifts, setGifts] = useState<GiftRecord[]>([]);
@@ -708,8 +708,12 @@ const App: React.FC = () => {
 
   // Filter debts
   const filteredDebts = useMemo(() => {
-    if (debtFilter === 'all') return debts;
-    return debts.filter(d => d.type === debtFilter);
+    if (debtFilter === 'completed') {
+      return debts.filter(d => d.status === 'completed');
+    }
+    const activeDebts = debts.filter(d => d.status !== 'completed');
+    if (debtFilter === 'all') return activeDebts;
+    return activeDebts.filter(d => d.type === debtFilter);
   }, [debts, debtFilter]);
 
   // Debt summary stats
@@ -1121,9 +1125,9 @@ const App: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                 </svg>
                 Dư nợ
-                {debts.length > 0 && (
+                {debts.filter(d => d.status !== 'completed').length > 0 && (
                   <span className="bg-blue-100 text-blue-600 text-xs px-1.5 py-0.5 rounded-full">
-                    {debts.length}
+                    {debts.filter(d => d.status !== 'completed').length}
                   </span>
                 )}
               </span>
@@ -1406,7 +1410,7 @@ const App: React.FC = () => {
                   +{debtStats.receivable.toLocaleString('vi-VN')}đ
                 </p>
                 <p className="text-xs text-emerald-500 mt-1">
-                  {debts.filter(d => d.type === 'receivable').length} khoản
+                  {debts.filter(d => d.type === 'receivable' && d.status !== 'completed').length} khoản
                 </p>
               </div>
               <div className="card p-4 bg-gradient-to-br from-rose-50 to-rose-100 border-rose-200">
@@ -1418,7 +1422,7 @@ const App: React.FC = () => {
                   -{debtStats.payable.toLocaleString('vi-VN')}đ
                 </p>
                 <p className="text-xs text-rose-500 mt-1">
-                  {debts.filter(d => d.type === 'payable').length} khoản
+                  {debts.filter(d => d.type === 'payable' && d.status !== 'completed').length} khoản
                 </p>
               </div>
               <div className="card p-4 bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200 col-span-2 sm:col-span-1">
@@ -1441,7 +1445,7 @@ const App: React.FC = () => {
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
               >
-                Tất cả ({debts.length})
+                Tất cả ({debts.filter(d => d.status !== 'completed').length})
               </button>
               <button
                 onClick={() => setDebtFilter('receivable')}
@@ -1450,7 +1454,7 @@ const App: React.FC = () => {
                   : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                   }`}
               >
-                📥 Người khác nợ mình ({debts.filter(d => d.type === 'receivable').length})
+                📥 Người khác nợ mình ({debts.filter(d => d.type === 'receivable' && d.status !== 'completed').length})
               </button>
               <button
                 onClick={() => setDebtFilter('payable')}
@@ -1459,7 +1463,16 @@ const App: React.FC = () => {
                   : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
                   }`}
               >
-                📤 Mình nợ người khác ({debts.filter(d => d.type === 'payable').length})
+                📤 Mình nợ người khác ({debts.filter(d => d.type === 'payable' && d.status !== 'completed').length})
+              </button>
+              <button
+                onClick={() => setDebtFilter('completed')}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${debtFilter === 'completed'
+                  ? 'bg-slate-600 text-white'
+                  : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
+                  }`}
+              >
+                ✅ Đã hoàn thành ({debts.filter(d => d.status === 'completed').length})
               </button>
             </div>
 
@@ -1498,15 +1511,19 @@ const App: React.FC = () => {
                       ? 'Chưa có khoản nợ nào'
                       : debtFilter === 'receivable'
                         ? 'Chưa có ai nợ bạn'
-                        : 'Bạn chưa nợ ai'
+                        : debtFilter === 'payable'
+                          ? 'Bạn chưa nợ ai'
+                          : 'Chưa có khoản nợ nào đã hoàn thành'
                     }
                   </p>
-                  <button
-                    onClick={() => setIsDebtFormOpen(true)}
-                    className="text-blue-600 font-medium hover:text-blue-700"
-                  >
-                    Thêm khoản nợ ngay
-                  </button>
+                  {debtFilter !== 'completed' && (
+                    <button
+                      onClick={() => setIsDebtFormOpen(true)}
+                      className="text-blue-600 font-medium hover:text-blue-700"
+                    >
+                      Thêm khoản nợ ngay
+                    </button>
+                  )}
                 </div>
               )}
             </div>
