@@ -2,6 +2,22 @@ import React, { useState } from 'react';
 import { ExpenseEvent, ExpenseParticipant, ExpenseSplit, Repayment } from '../types';
 import { getParticipantSettlementStates, getEventRepaymentProgress, generateReminderText } from '../services/sharedExpense.service';
 
+const POPULAR_BANKS = [
+  { id: 'mbb', name: 'MB Bank (MB)' },
+  { id: 'vcb', name: 'Vietcombank (VCB)' },
+  { id: 'tcb', name: 'Techcombank (TCB)' },
+  { id: 'acb', name: 'ACB' },
+  { id: 'bidv', name: 'BIDV' },
+  { id: 'vietinbank', name: 'VietinBank' },
+  { id: 'vpb', name: 'VPBank' },
+  { id: 'tpb', name: 'TPBank' },
+  { id: 'agribank', name: 'Agribank' },
+  { id: 'vib', name: 'VIB' },
+  { id: 'sacombank', name: 'Sacombank' },
+  { id: 'hdb', name: 'HDBank' },
+  { id: 'shb', name: 'SHB' },
+];
+
 interface SharedExpenseDetailProps {
   event: ExpenseEvent;
   participants: ExpenseParticipant[];
@@ -27,6 +43,17 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
   const [paymentNote, setPaymentNote] = useState('');
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
+  // Bank & QR States
+  const [activeParticipantForQR, setActiveParticipantForQR] = useState<string | null>(null);
+  const [bankInfo, setBankInfo] = useState<{ bankId: string; accountNo: string; accountName: string } | null>(() => {
+    const saved = localStorage.getItem('imoney_bank_info');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [showBankConfig, setShowBankConfig] = useState(false);
+  const [bankId, setBankId] = useState(bankInfo?.bankId || '');
+  const [accountNo, setAccountNo] = useState(bankInfo?.accountNo || '');
+  const [accountName, setAccountName] = useState(bankInfo?.accountName || '');
+
   const stats = getEventRepaymentProgress(event, participants, splits, repayments);
   const settlements = getParticipantSettlementStates(event.id, participants, splits, repayments);
   
@@ -34,6 +61,8 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
 
   const handleOpenPaymentForm = (participantId: string, remainingAmount: number) => {
     setActiveParticipantForPayment(participantId);
+    setActiveParticipantForQR(null);
+    setShowBankConfig(false);
     setPaymentAmount(remainingAmount.toString());
     setPaymentDate(new Date().toISOString().split('T')[0]);
     setPaymentNote('');
@@ -41,6 +70,12 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
 
   const handleClosePaymentForm = () => {
     setActiveParticipantForPayment(null);
+  };
+
+  const handleOpenQRForm = (participantId: string) => {
+    setActiveParticipantForQR(participantId);
+    setActiveParticipantForPayment(null);
+    setShowBankConfig(false);
   };
 
   const handleSavePayment = (e: React.FormEvent, participantId: string) => {
@@ -202,22 +237,168 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
                       {!isPaid && (
                         <div className="flex justify-between items-center text-xs">
                           <span className="text-gray-500 font-medium">Còn nợ: <strong className="text-rose-600 font-bold">{amountRemaining.toLocaleString('vi-VN')}đ</strong></span>
-                          <div className="flex gap-2">
+                          <div className="flex gap-1.5">
                             <button
                               type="button"
                               onClick={() => handleCopyReminder(participant.display_name, amountRemaining)}
-                              className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-all active:scale-95"
+                              className="px-2 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg text-[10px] sm:text-xs flex items-center gap-0.5 transition-all active:scale-95"
                             >
-                              💬 {copiedText === participant.display_name ? 'Đã sao chép!' : 'Nhắc nợ'}
+                              💬 {copiedText === participant.display_name ? 'Đã copy!' : 'Nhắc'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenQRForm(participant.id)}
+                              className="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-[10px] sm:text-xs flex items-center gap-0.5 transition-all active:scale-95 shadow-sm"
+                            >
+                              📸 QR
                             </button>
                             <button
                               type="button"
                               onClick={() => handleOpenPaymentForm(participant.id, amountRemaining)}
-                              className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg text-xs flex items-center gap-1 transition-all active:scale-95 shadow-sm"
+                              className="px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg text-[10px] sm:text-xs flex items-center gap-0.5 transition-all active:scale-95 shadow-sm"
                             >
-                              💵 Trả tiền
+                              💵 Trả
                             </button>
                           </div>
+                        </div>
+                      )}
+
+                      {/* Bank Configuration form */}
+                      {activeParticipantForQR === participant.id && showBankConfig && (
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3 animate-fade-in">
+                          <p className="font-bold text-gray-700 text-xs flex items-center gap-1">⚙️ Thiết lập tài khoản ngân hàng</p>
+                          <div className="space-y-2">
+                            <div>
+                              <label className="block text-[10px] text-gray-500 mb-1">Chọn Ngân hàng</label>
+                              <select
+                                value={bankId}
+                                onChange={(e) => setBankId(e.target.value)}
+                                className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg outline-none bg-white font-medium text-gray-800"
+                              >
+                                <option value="">-- Chọn ngân hàng --</option>
+                                {POPULAR_BANKS.map(b => (
+                                  <option key={b.id} value={b.id}>{b.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-gray-500 mb-1">Số tài khoản</label>
+                              <input
+                                type="text"
+                                value={accountNo}
+                                onChange={(e) => setAccountNo(e.target.value)}
+                                placeholder="Nhập số tài khoản..."
+                                className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg outline-none font-semibold text-gray-800"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-gray-500 mb-1">Tên chủ tài khoản (Không dấu)</label>
+                              <input
+                                type="text"
+                                value={accountName}
+                                onChange={(e) => setAccountName(e.target.value.toUpperCase())}
+                                placeholder="VD: NGUYEN VAN A"
+                                className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg outline-none font-semibold text-gray-800 uppercase"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex gap-2 justify-end pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setShowBankConfig(false)}
+                              className="px-3 py-1 bg-white border border-gray-200 text-gray-600 rounded-lg text-xs"
+                            >
+                              Hủy
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!bankId || !accountNo || !accountName) {
+                                  alert('Vui lòng điền đầy đủ thông tin ngân hàng');
+                                  return;
+                                }
+                                const info = { bankId, accountNo, accountName: accountName.trim() };
+                                localStorage.setItem('imoney_bank_info', JSON.stringify(info));
+                                setBankInfo(info);
+                                setShowBankConfig(false);
+                              }}
+                              className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-semibold"
+                            >
+                              Lưu thông tin
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Inline VietQR Code Panel */}
+                      {activeParticipantForQR === participant.id && !showBankConfig && (
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col items-center space-y-3 animate-fade-in text-center">
+                          <p className="font-bold text-gray-700 text-xs flex items-center gap-1">📸 Mã VietQR chuyển tiền tự động</p>
+                          
+                          {!bankInfo ? (
+                            <div className="space-y-2 w-full">
+                              <p className="text-xs text-amber-600">Bạn chưa thiết lập tài khoản ngân hàng để nhận tiền.</p>
+                              <button
+                                type="button"
+                                onClick={() => setShowBankConfig(true)}
+                                className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg text-xs transition-colors"
+                              >
+                                ⚙️ Cấu hình Ngân hàng ngay
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              {/* QR Code image from VietQR.io */}
+                              <div className="bg-white p-2 rounded-xl border border-gray-200/60 shadow-sm">
+                                <img
+                                  src={`https://img.vietqr.io/image/${bankInfo.bankId}-${bankInfo.accountNo}-compact2.png?amount=${amountRemaining}&addInfo=${encodeURIComponent(`IMN CH ${event.id.slice(-5)}${participant.id.slice(-5)}`)}&accountName=${encodeURIComponent(bankInfo.accountName)}`}
+                                  alt="Mã QR Chuyển khoản"
+                                  className="w-48 h-48 mx-auto object-contain"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).src = 'https://placehold.co/200x200?text=Loi+tai+QR';
+                                  }}
+                                />
+                              </div>
+                              
+                              {/* QR Details */}
+                              <div className="text-[11px] text-gray-500 text-left space-y-1 w-full border-t border-gray-100 pt-2.5">
+                                <p>🏦 <strong>Ngân hàng:</strong> {POPULAR_BANKS.find(b => b.id === bankInfo.bankId)?.name || bankInfo.bankId.toUpperCase()}</p>
+                                <p>💳 <strong>Số tài khoản:</strong> {bankInfo.accountNo}</p>
+                                <p>👤 <strong>Chủ tài khoản:</strong> {bankInfo.accountName}</p>
+                                <p>💵 <strong>Số tiền:</strong> <strong className="text-gray-800">{amountRemaining.toLocaleString('vi-VN')}đ</strong></p>
+                                <div className="flex items-center justify-between bg-blue-50/50 p-2 rounded-lg border border-blue-105/40 mt-1">
+                                  <span className="truncate">🔤 <strong>Nội dung:</strong> <code className="text-blue-700 font-bold bg-blue-100/60 px-1 py-0.5 rounded text-[10px]">IMN CH {event.id.slice(-5)}{participant.id.slice(-5)}</code></span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(`IMN CH ${event.id.slice(-5)}${participant.id.slice(-5)}`);
+                                      alert('Đã sao chép nội dung chuyển khoản!');
+                                    }}
+                                    className="text-blue-600 hover:text-blue-800 text-[10px] font-bold ml-1.5 flex-shrink-0"
+                                  >
+                                    Sao chép
+                                  </button>
+                                </div>
+                              </div>
+                              
+                              <div className="flex gap-2 w-full mt-2.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setShowBankConfig(true)}
+                                  className="flex-1 px-2.5 py-1.5 bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 rounded-lg text-xs transition-colors"
+                                >
+                                  ⚙️ Thay đổi TK
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveParticipantForQR(null)}
+                                  className="flex-1 px-2.5 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold rounded-lg text-xs transition-colors"
+                                >
+                                  Đóng
+                                </button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       )}
 
