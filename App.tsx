@@ -1305,7 +1305,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen safe-bottom">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden safe-bottom">
       {/* Offline Banner */}
       {!isOnline && (
         <div className="bg-amber-500 text-white text-center py-2 px-4 text-sm font-medium flex items-center justify-center gap-2 sticky top-0 z-50">
@@ -1537,7 +1537,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-4 sm:py-6 lg:py-8 safe-bottom">
+      <main className="w-full max-w-6xl mx-auto px-4 py-4 sm:py-6 lg:py-8 safe-bottom">
         {/* Dashboard View */}
         {currentView === 'dashboard' && (
           <Dashboard
@@ -1564,7 +1564,7 @@ const App: React.FC = () => {
             </div>
 
             {/* Overview Stats */}
-            <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-none sm:grid sm:grid-cols-3 sm:gap-4">
+            <div className="w-full max-w-full flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-none sm:grid sm:grid-cols-3 sm:gap-4">
               <div className="snap-start min-w-[85%] sm:min-w-0 flex-shrink-0">
                 <StatsCard title="Số dư hiện tại" amount={stats.balance} type="balance" />
               </div>
@@ -1704,7 +1704,7 @@ const App: React.FC = () => {
                       </div>
 
                       {/* Type filter tags */}
-                      <div className="w-full sm:w-auto flex bg-gray-100 p-0.5 rounded-xl">
+                      <div className="w-full sm:w-auto flex bg-gray-100 p-0.5 rounded-xl overflow-x-auto scrollbar-none">
                         <button
                           onClick={() => setTypeFilter('ALL')}
                           className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
@@ -1919,7 +1919,7 @@ const App: React.FC = () => {
             </div>
 
             {/* Filter Buttons */}
-            <div className="flex gap-2 overflow-x-auto pb-2">
+            <div className="w-full max-w-full flex gap-2 overflow-x-auto pb-2 scrollbar-none">
               <button
                 onClick={() => setDebtFilter('all')}
                 className={`px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${debtFilter === 'all'
@@ -2060,7 +2060,7 @@ const App: React.FC = () => {
             </div>
 
             {/* Filter by Event Type */}
-            <div className="flex gap-2 overflow-x-auto pb-2">
+            <div className="w-full max-w-full flex gap-2 overflow-x-auto pb-2 scrollbar-none">
               <button
                 onClick={() => setGiftFilter('all')}
                 className={`px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${giftFilter === 'all'
