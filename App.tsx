@@ -160,9 +160,6 @@ const App: React.FC = () => {
   // Show login screen if not authenticated
   if (!user) {
     return <LoginScreen onLoginSuccess={() => {}} isOnline={isOnline} />;
-  }ated
-  if (!user) {
-    return <LoginScreen onLoginSuccess={() => loadTransactions()} isOnline={isOnline} />;
   }
 
   return (
