@@ -227,7 +227,7 @@ export const SharedExpensesList: React.FC<SharedExpensesListProps> = ({
                 <div
                   key={event.id}
                   onClick={() => onSelectEvent(event)}
-                  className={`card p-4.5 cursor-pointer hover:shadow-md transition-all border-l-4 ${
+                  className={`card p-4 cursor-pointer hover:shadow-md transition-all border-l-4 ${
                     progress.isFullySettled
                       ? 'border-l-emerald-500 bg-emerald-50/10'
                       : isOverdue
@@ -237,14 +237,14 @@ export const SharedExpensesList: React.FC<SharedExpensesListProps> = ({
                 >
                   {/* Title & Status */}
                   <div className="flex justify-between items-start gap-2 mb-2">
-                    <div>
-                      <h4 className="font-bold text-gray-800 text-base line-clamp-1">{event.title}</h4>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="font-bold text-gray-800 text-base truncate">{event.title}</h4>
                       <p className="text-[11px] text-gray-400">
                         {new Date(event.event_date).toLocaleDateString('vi-VN')}
                       </p>
                     </div>
                     {isOverdue && (
-                      <span className="bg-rose-100 text-rose-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse flex items-center gap-0.5">
+                      <span className="bg-rose-100 text-rose-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse flex items-center gap-0.5 shrink-0">
                         🚨 Quá hạn
                       </span>
                     )}
@@ -264,7 +264,7 @@ export const SharedExpensesList: React.FC<SharedExpensesListProps> = ({
                         </p>
                       </>
                     )}
-                    <p className="text-[10px] text-gray-400">
+                    <p className="text-[10px] text-gray-400 truncate">
                       Tổng bill: {event.total_amount.toLocaleString('vi-VN')}đ • Bạn chịu {progress.personalShare.toLocaleString('vi-VN')}đ
                     </p>
                   </div>

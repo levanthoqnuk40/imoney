@@ -609,6 +609,7 @@ export function useFinancialData(user: User | null) {
           description: e.description || undefined,
           status: e.status as 'open' | 'partial' | 'settled',
           transaction_id: e.transaction_id || undefined,
+          receipt_url: e.receipt_url || undefined,
         }));
 
         const eventIds = mappedEvents.map(e => e.id);
