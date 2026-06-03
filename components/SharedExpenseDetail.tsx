@@ -46,6 +46,7 @@ interface SharedExpenseDetailProps {
   onAddRepayment: (repayment: Omit<Repayment, 'id'>) => void;
   onDeleteRepayment: (id: string) => void;
   onDeleteEvent?: (id: string) => void;
+  onEdit?: () => void;
 }
 
 export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
@@ -56,7 +57,8 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
   onClose,
   onAddRepayment,
   onDeleteRepayment,
-  onDeleteEvent
+  onDeleteEvent,
+  onEdit
 }) => {
   const handleDelete = () => {
     if (onDeleteEvent && confirm('Bạn có chắc chắn muốn xóa sự kiện chi hộ này không? Tất cả các khoản thành viên, chia tiền, và hoàn trả liên quan cũng sẽ bị xóa.')) {
@@ -165,6 +167,18 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-1">
+            {onEdit && (
+              <button
+                type="button"
+                onClick={onEdit}
+                className="p-2 hover:bg-blue-50 text-blue-600 rounded-full transition-colors"
+                title="Chỉnh sửa sự kiện"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            )}
             {onDeleteEvent && (
               <button
                 type="button"

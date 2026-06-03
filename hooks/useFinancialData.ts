@@ -1401,6 +1401,268 @@ export function useFinancialData(user: User | null) {
     await refreshPendingCount();
   }, [user, refreshPendingCount]);
 
+  const handleUpdateExpenseEvent = useCallback(async (
+    eventId: string,
+    eventData: Omit<ExpenseEvent, 'id' | 'user_id' | 'status'>,
+    participantsInput: Omit<ExpenseParticipant, 'id' | 'event_id'>[],
+    splitsInput: { participantIndex: number; amountDue: number }[],
+    ownerCategory?: string
+  ) => {
+    if (!user) return;
+
+    // 1. Get old participants to preserve IDs where display_name and is_owner match
+    const oldParticipants = expenseParticipants.filter(p => p.event_id === eventId);
+    
+    // Map new participants to new objects, preserving ID if name matches
+    const localParticipants: ExpenseParticipant[] = participantsInput.map(p => {
+      const match = oldParticipants.find(old => old.display_name === p.display_name && old.is_owner === p.is_owner);
+      return {
+        id: match ? match.id : generateUUID(),
+        event_id: eventId,
+        display_name: p.display_name,
+        phone_number: p.phone_number,
+        is_owner: p.is_owner,
+        note: p.note
+      };
+    });
+
+    // 2. Create splits with correct participant_id
+    const localSplits: ExpenseSplit[] = splitsInput.map(s => {
+      const p = localParticipants[s.participantIndex];
+      return {
+        id: generateUUID(),
+        event_id: eventId,
+        participant_id: p.id,
+        amount_due: s.amountDue
+      };
+    });
+
+    // 3. Find owner split and update linked transaction
+    const ownerParticipant = localParticipants.find(p => p.is_owner);
+    const ownerSplit = ownerParticipant ? localSplits.find(s => s.participant_id === ownerParticipant.id) : null;
+    const ownerSplitAmount = ownerSplit ? ownerSplit.amount_due : 0;
+
+    // Find if the event had a linked transaction
+    const existingEvent = expenseEvents.find(e => e.id === eventId);
+    let linkedTxId = existingEvent?.transaction_id;
+
+    if (ownerSplitAmount > 0) {
+      if (linkedTxId) {
+        // Update existing transaction
+        const updatedTx: Transaction = {
+          id: linkedTxId,
+          amount: ownerSplitAmount,
+          category: ownerCategory || 'Ăn uống',
+          description: `[Chi hộ] ${eventData.title}`,
+          date: eventData.event_date,
+          type: 'EXPENSE'
+        };
+        setTransactions(prev => prev.map(t => t.id === linkedTxId ? updatedTx : t));
+        await OfflineDB.put('transactions', updatedTx);
+
+        // Queue update sync
+        await SyncService.addToQueue({
+          table: 'transactions',
+          action: 'UPDATE',
+          data: {
+            id: linkedTxId,
+            user_id: user.id,
+            amount: ownerSplitAmount,
+            category: ownerCategory || 'Ăn uống',
+            description: `[Chi hộ] ${eventData.title}`,
+            transaction_date: eventData.event_date
+          }
+        });
+      } else {
+        // Create new linked transaction
+        linkedTxId = generateUUID();
+        const personalTx: Transaction = {
+          id: linkedTxId,
+          amount: ownerSplitAmount,
+          category: ownerCategory || 'Ăn uống',
+          description: `[Chi hộ] ${eventData.title}`,
+          date: eventData.event_date,
+          type: 'EXPENSE'
+        };
+        setTransactions(prev => [personalTx, ...prev]);
+        await OfflineDB.put('transactions', personalTx);
+
+        await SyncService.addToQueue({
+          table: 'transactions',
+          action: 'INSERT',
+          data: {
+            id: linkedTxId,
+            _tempId: linkedTxId,
+            user_id: user.id,
+            type: 'expense',
+            amount: ownerSplitAmount,
+            category: ownerCategory || 'Ăn uống',
+            description: `[Chi hộ] ${eventData.title}`,
+            transaction_date: eventData.event_date,
+            currency: 'VND'
+          }
+        });
+      }
+    } else if (linkedTxId) {
+      // Owner share became 0, delete linked transaction
+      setTransactions(prev => prev.filter(t => t.id !== linkedTxId));
+      await OfflineDB.deleteById('transactions', linkedTxId);
+      await SyncService.addToQueue({
+        table: 'transactions',
+        action: 'DELETE',
+        data: { id: linkedTxId, user_id: user.id }
+      });
+      linkedTxId = undefined;
+    }
+
+    // Determine status of the event based on new splits and repayments
+    const eventRepayments = repayments.filter(r => r.event_id === eventId);
+    let totalPaid = eventRepayments.reduce((sum, r) => sum + r.amount, 0);
+    let totalReceivable = localSplits
+      .filter(s => {
+        const p = localParticipants.find(p => p.id === s.participant_id);
+        return p && !p.is_owner;
+      })
+      .reduce((sum, s) => sum + s.amount_due, 0);
+
+    const status = totalPaid >= totalReceivable && totalReceivable > 0
+      ? 'settled'
+      : totalPaid > 0
+        ? 'partial'
+        : 'open';
+
+    const updatedEvent: ExpenseEvent = {
+      id: eventId,
+      user_id: user.id,
+      title: eventData.title,
+      event_date: eventData.event_date,
+      total_amount: eventData.total_amount,
+      split_method: eventData.split_method,
+      due_date: eventData.due_date,
+      description: eventData.description,
+      status: status,
+      transaction_id: linkedTxId
+    };
+
+    // Update local state
+    setExpenseEvents(prev => prev.map(e => e.id === eventId ? updatedEvent : e));
+    
+    // Replace participants: filter out old, add new
+    setExpenseParticipants(prev => [
+      ...prev.filter(p => p.event_id !== eventId),
+      ...localParticipants
+    ]);
+
+    // Replace splits: filter out old, add new
+    setExpenseSplits(prev => [
+      ...prev.filter(s => s.event_id !== eventId),
+      ...localSplits
+    ]);
+
+    // Update IndexedDB
+    await OfflineDB.put('expense_events', updatedEvent);
+    
+    // Delete removed participants
+    const newParticipantIds = new Set(localParticipants.map(p => p.id));
+    for (const p of oldParticipants) {
+      if (!newParticipantIds.has(p.id)) {
+        await OfflineDB.deleteById('expense_participants', p.id);
+        // Queue delete for participant
+        await SyncService.addToQueue({
+          table: 'expense_participants',
+          action: 'DELETE',
+          data: { id: p.id }
+        });
+      }
+    }
+    await OfflineDB.putAll('expense_participants', localParticipants);
+    
+    // For splits, we clear and recreate
+    const remainingSplits = expenseSplits.filter(s => s.event_id !== eventId);
+    await OfflineDB.clearStore('expense_splits');
+    await OfflineDB.putAll('expense_splits', [...remainingSplits, ...localSplits]);
+
+    // Queue sync items
+    await SyncService.addToQueue({
+      table: 'expense_events',
+      action: 'UPDATE',
+      data: {
+        id: eventId,
+        user_id: user.id,
+        title: updatedEvent.title,
+        event_date: updatedEvent.event_date,
+        total_amount: updatedEvent.total_amount,
+        split_method: updatedEvent.split_method,
+        due_date: updatedEvent.due_date || null,
+        description: updatedEvent.description || null,
+        status: updatedEvent.status,
+        transaction_id: updatedEvent.transaction_id || null
+      }
+    });
+
+    const oldParticipantIds = new Set(oldParticipants.map(p => p.id));
+    for (const p of localParticipants) {
+      if (oldParticipantIds.has(p.id)) {
+        await SyncService.addToQueue({
+          table: 'expense_participants',
+          action: 'UPDATE',
+          data: {
+            id: p.id,
+            display_name: p.display_name,
+            phone_number: p.phone_number || null,
+            note: p.note || null
+          }
+        });
+      } else {
+        await SyncService.addToQueue({
+          table: 'expense_participants',
+          action: 'INSERT',
+          data: {
+            id: p.id,
+            _tempId: p.id,
+            event_id: eventId,
+            display_name: p.display_name,
+            phone_number: p.phone_number || null,
+            is_owner: p.is_owner,
+            note: p.note || null
+          }
+        });
+      }
+    }
+
+    const oldSplits = expenseSplits.filter(s => s.event_id === eventId);
+    for (const s of oldSplits) {
+      await SyncService.addToQueue({
+        table: 'expense_splits',
+        action: 'DELETE',
+        data: { id: s.id }
+      });
+    }
+
+    for (const s of localSplits) {
+      await SyncService.addToQueue({
+        table: 'expense_splits',
+        action: 'INSERT',
+        data: {
+          id: s.id,
+          _tempId: s.id,
+          event_id: eventId,
+          participant_id: s.participant_id,
+          amount_due: s.amount_due,
+          note: s.note || null
+        }
+      });
+    }
+
+    if (navigator.onLine) {
+      await processQueueAndLog('Cập nhật khoản chi hộ');
+      if (loadExpenseDataRef.current) {
+        loadExpenseDataRef.current().catch(err => console.error('Error reloading after update:', err));
+      }
+    }
+    await refreshPendingCount();
+  }, [user, expenseEvents, expenseParticipants, expenseSplits, repayments, refreshPendingCount, processQueueAndLog]);
+
   const handleDeleteExpenseEvent = useCallback(async (eventId: string) => {
     if (!user) return;
 
@@ -1727,6 +1989,7 @@ export function useFinancialData(user: User | null) {
     handleSync,
     clearAllData,
     handleAddExpenseEvent,
+    handleUpdateExpenseEvent,
     handleDeleteExpenseEvent,
     handleAddRepayment,
     handleDeleteRepayment,

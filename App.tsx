@@ -85,6 +85,7 @@ const App: React.FC = () => {
     handleGetAiAdvice,
     clearAllData,
     handleAddExpenseEvent,
+    handleUpdateExpenseEvent,
     handleDeleteExpenseEvent,
     handleAddRepayment,
     handleDeleteRepayment,
@@ -113,6 +114,7 @@ const App: React.FC = () => {
   // Shared expenses tracking state
   const [isSharedFormOpen, setIsSharedFormOpen] = useState(false);
   const [selectedSharedEvent, setSelectedSharedEvent] = useState<ExpenseEvent | null>(null);
+  const [editingSharedEvent, setEditingSharedEvent] = useState<ExpenseEvent | null>(null);
 
   // Notification bell panel state
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
@@ -1311,10 +1313,25 @@ const App: React.FC = () => {
         />
       )}
 
+      {/* Shared Expense Form Modal (Edit) */}
+      {editingSharedEvent && (
+        <SharedExpenseForm
+          onSubmit={(eventData, participants, splits, ownerCategory) => {
+            handleUpdateExpenseEvent(editingSharedEvent.id, eventData, participants, splits, ownerCategory);
+            setEditingSharedEvent(null);
+          }}
+          onClose={() => setEditingSharedEvent(null)}
+          categories={categories}
+          initialEvent={editingSharedEvent}
+          initialParticipants={expenseParticipants.filter(p => p.event_id === editingSharedEvent.id)}
+          initialSplits={expenseSplits.filter(s => s.event_id === editingSharedEvent.id)}
+        />
+      )}
+
       {/* Shared Expense Detail Modal */}
       {selectedSharedEvent && (
         <SharedExpenseDetail
-          event={selectedSharedEvent}
+          event={expenseEvents.find(e => e.id === selectedSharedEvent.id) || selectedSharedEvent}
           participants={expenseParticipants}
           splits={expenseSplits}
           repayments={repayments}
@@ -1322,6 +1339,10 @@ const App: React.FC = () => {
           onAddRepayment={handleAddRepayment}
           onDeleteRepayment={handleDeleteRepayment}
           onDeleteEvent={handleDeleteExpenseEvent}
+          onEdit={() => {
+            setEditingSharedEvent(selectedSharedEvent);
+            setSelectedSharedEvent(null);
+          }}
         />
       )}
     </div>

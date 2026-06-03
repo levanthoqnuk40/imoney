@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ExpenseEvent, ExpenseParticipant, Category } from '../types';
+import { ExpenseEvent, ExpenseParticipant, ExpenseSplit, Category } from '../types';
 
 interface SharedExpenseFormProps {
   onSubmit: (
@@ -10,28 +10,66 @@ interface SharedExpenseFormProps {
   ) => void;
   onClose: () => void;
   categories: Category[];
+  initialEvent?: ExpenseEvent;
+  initialParticipants?: ExpenseParticipant[];
+  initialSplits?: ExpenseSplit[];
 }
 
-export const SharedExpenseForm: React.FC<SharedExpenseFormProps> = ({ onSubmit, onClose, categories }) => {
-  const [title, setTitle] = useState('');
-  const [totalAmount, setTotalAmount] = useState('');
-  const [eventDate, setEventDate] = useState(new Date().toISOString().split('T')[0]);
-  const [dueDate, setDueDate] = useState('');
-  const [description, setDescription] = useState('');
-  const [splitMethod, setSplitMethod] = useState<'equal' | 'custom'>('equal');
+export const SharedExpenseForm: React.FC<SharedExpenseFormProps> = ({ 
+  onSubmit, 
+  onClose, 
+  categories,
+  initialEvent,
+  initialParticipants,
+  initialSplits
+}) => {
+  const [title, setTitle] = useState(initialEvent?.title || '');
+  const [totalAmount, setTotalAmount] = useState(initialEvent?.total_amount.toString() || '');
+  const [eventDate, setEventDate] = useState(initialEvent?.event_date || new Date().toISOString().split('T')[0]);
+  const [dueDate, setDueDate] = useState(initialEvent?.due_date || '');
+  const [description, setDescription] = useState(initialEvent?.description || '');
+  const [splitMethod, setSplitMethod] = useState<'equal' | 'custom'>(initialEvent?.split_method || 'equal');
   const [ownerCategory, setOwnerCategory] = useState('Ăn uống');
   
   // List of participants names. Owner is always index 0.
-  const [friends, setFriends] = useState<string[]>(['']);
+  const [friends, setFriends] = useState<string[]>(() => {
+    if (initialParticipants) {
+      const friendNames = initialParticipants.filter(p => !p.is_owner).map(p => p.display_name);
+      return friendNames.length > 0 ? friendNames : [''];
+    }
+    return [''];
+  });
   
   // Splits amounts
-  const [customAmounts, setCustomAmounts] = useState<string[]>([]);
+  const [customAmounts, setCustomAmounts] = useState<string[]>(() => {
+    if (initialSplits && initialParticipants) {
+      const ownerPart = initialParticipants.find(p => p.is_owner);
+      const ownerSplit = ownerPart ? initialSplits.find(s => s.participant_id === ownerPart.id) : null;
+      const ownerAmt = ownerSplit ? ownerSplit.amount_due.toString() : '0';
+      
+      const friendPartAmts = initialParticipants
+        .filter(p => !p.is_owner)
+        .map(p => {
+          const s = initialSplits.find(sp => sp.participant_id === p.id);
+          return s ? s.amount_due.toString() : '0';
+        });
+        
+      return [ownerAmt, ...friendPartAmts];
+    }
+    return [];
+  });
 
   const totalVal = parseFloat(totalAmount) || 0;
   const participantCount = friends.filter(f => f.trim() !== '').length + 1; // friends + owner
 
+  const isFirstRender = React.useRef(true);
+
   // Auto initialize custom amounts when method changes
   useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
     if (splitMethod === 'custom') {
       const share = Math.round(totalVal / participantCount);
       const initialCustoms = Array(participantCount).fill(share.toString());
@@ -173,7 +211,9 @@ export const SharedExpenseForm: React.FC<SharedExpenseFormProps> = ({ onSubmit, 
       <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[90vh] flex flex-col modal-content modal-fullscreen-mobile">
         {/* Header */}
         <div className="p-4 sm:p-6 border-b border-gray-100 flex justify-between items-center flex-shrink-0">
-          <h2 className="text-lg sm:text-xl font-bold text-gray-800">Tạo Khoản Chi Hộ Nhóm</h2>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-800">
+            {initialEvent ? 'Chỉnh Sửa Khoản Chi Hộ' : 'Tạo Khoản Chi Hộ Nhóm'}
+          </h2>
           <button
             type="button"
             onClick={onClose}
