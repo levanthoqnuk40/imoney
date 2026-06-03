@@ -9,6 +9,21 @@ interface TransactionListModalProps {
     onTransactionClick: (transaction: Transaction) => void;
 }
 
+const formatDescription = (desc: string) => {
+    if (!desc || desc.trim() === '' || desc.toLowerCase() === 'null') {
+        return '';
+    }
+    let clean = desc.trim();
+    clean = clean.replace(/^(MBVCB|MOMO-CASHIN|MOMO|VCB|MB|BIDV|Agribank|Techcombank|ACB|Vietinbank|TPB|VPB)\.?\s*[0-9A-Z]*\.?\s*/i, '');
+    if (!clean) return desc.trim();
+    return clean.split(/\s+/).map(word => {
+        if (word.length > 12 && /^[a-z0-9_\-\.\:\/]+$/i.test(word)) {
+            return word.slice(0, 6) + '...';
+        }
+        return word;
+    }).join(' ');
+};
+
 const TransactionListModal: React.FC<TransactionListModalProps> = ({
     title,
     transactions,
@@ -61,7 +76,7 @@ const TransactionListModal: React.FC<TransactionListModalProps> = ({
                                         </span>
                                         <div className="min-w-0">
                                             <p className="font-bold text-gray-800 text-sm truncate">
-                                                {tx.description || tx.category}
+                                                {formatDescription(tx.description) || tx.category}
                                             </p>
                                             <div className="flex items-center gap-2 mt-0.5">
                                                 <span className="text-[10px] text-gray-400 font-medium">

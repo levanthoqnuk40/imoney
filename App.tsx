@@ -31,10 +31,20 @@ const formatDescription = (desc: string) => {
     return 'Không có ghi chú';
   }
   
+  let clean = desc.trim();
+  
+  // Remove common banking/momo prefixes like "MBVCB.xxxxxx.", "FTxxxxxx", "MOMO-CASHIN."
+  clean = clean.replace(/^(MBVCB|MOMO-CASHIN|MOMO|VCB|MB|BIDV|Agribank|Techcombank|ACB|Vietinbank|TPB|VPB)\.?\s*[0-9A-Z]*\.?\s*/i, '');
+  
+  // If description becomes empty after cleaning, fallback to original
+  if (!clean) {
+    clean = desc.trim();
+  }
+  
   // Clean transaction references or trace codes
-  return desc.split(' ').map(word => {
-    // If it's a long alphanumeric code (e.g. VCBFT123456 or Momo cashin ID)
-    if (word.length > 12 && /^[a-z0-9]+$/i.test(word)) {
+  return clean.split(/\s+/).map(word => {
+    // If it's a long alphanumeric code or trace code (e.g. VCBFT123456 or Momo cashin ID)
+    if (word.length > 12 && /^[a-z0-9_\-\.\:\/]+$/i.test(word)) {
       return word.slice(0, 6) + '...';
     }
     return word;
@@ -1721,10 +1731,10 @@ const App: React.FC = () => {
                         </div>
 
                         {/* Type filter tags */}
-                        <div className="w-full sm:w-auto flex bg-gray-100 p-0.5 rounded-xl overflow-x-auto scrollbar-none">
+                        <div className="w-full sm:w-auto flex bg-gray-100/80 p-1 sm:p-0.5 rounded-xl overflow-x-auto scrollbar-none">
                           <button
                             onClick={() => setTypeFilter('ALL')}
-                            className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                            className={`flex-1 sm:flex-initial text-center px-4 py-3 sm:py-1.5 text-sm sm:text-xs font-semibold rounded-lg transition-all ${
                               typeFilter === 'ALL'
                                 ? 'bg-white text-gray-800 shadow-sm'
                                 : 'text-gray-500 hover:text-gray-700'
@@ -1734,7 +1744,7 @@ const App: React.FC = () => {
                           </button>
                           <button
                             onClick={() => setTypeFilter('INCOME')}
-                            className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                            className={`flex-1 sm:flex-initial text-center px-4 py-3 sm:py-1.5 text-sm sm:text-xs font-semibold rounded-lg transition-all ${
                               typeFilter === 'INCOME'
                                 ? 'bg-white text-emerald-600 shadow-sm'
                                 : 'text-gray-500 hover:text-gray-700'
@@ -1744,7 +1754,7 @@ const App: React.FC = () => {
                           </button>
                           <button
                             onClick={() => setTypeFilter('EXPENSE')}
-                            className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                            className={`flex-1 sm:flex-initial text-center px-4 py-3 sm:py-1.5 text-sm sm:text-xs font-semibold rounded-lg transition-all ${
                               typeFilter === 'EXPENSE'
                                 ? 'bg-white text-rose-600 shadow-sm'
                                 : 'text-gray-500 hover:text-gray-700'
@@ -1819,7 +1829,7 @@ const App: React.FC = () => {
                                           </div>
                                           <div className="min-w-0 flex-1">
                                             <p className="font-semibold text-gray-800 text-sm sm:text-base truncate">{tx.category}</p>
-                                            <p className="text-xs text-gray-400 truncate">{formatDescription(tx.description)}</p>
+                                            <p className="text-xs text-gray-400 line-clamp-2 break-words leading-relaxed mt-0.5">{formatDescription(tx.description)}</p>
                                           </div>
                                         </div>
                                         <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 ml-3">
