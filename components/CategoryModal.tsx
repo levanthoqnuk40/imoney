@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Category, Transaction, Budget, TransactionType } from '../types';
 
 interface CategoryModalProps {
@@ -30,10 +30,9 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
-  // Filter categories by type
   const filteredCategories = categories.filter(c => c.type === activeTab);
 
-  const handleOpenForm = (category?: Category) => {
+  const handleOpenForm = useCallback((category?: Category) => {
     if (category) {
       setEditingCategory(category);
       setName(category.name);
@@ -48,15 +47,15 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
     setErrorMsg(null);
     setIsFormOpen(true);
     setShowEmojiPicker(false);
-  };
+  }, [activeTab]);
 
-  const handleCloseForm = () => {
+  const handleCloseForm = useCallback(() => {
     setIsFormOpen(false);
     setEditingCategory(null);
     setName('');
     setKeywordsInput('');
     setErrorMsg(null);
-  };
+  }, []);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,7 +65,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
       return;
     }
 
-    // Check duplicate name
     const isDuplicate = categories.some(c => 
       c.name.toLowerCase() === cleanName.toLowerCase() && 
       (!editingCategory || c.id !== editingCategory.id)
@@ -76,7 +74,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
       return;
     }
 
-    // Parse keywords
     const keywords = keywordsInput
       .split(',')
       .map(k => k.trim().toLowerCase())
@@ -85,7 +82,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
     const updatedCategories = [...categories];
 
     if (editingCategory) {
-      // Edit mode
       const oldName = editingCategory.name;
       const index = updatedCategories.findIndex(c => c.id === editingCategory.id);
       if (index !== -1) {
@@ -97,11 +93,9 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
         };
       }
       
-      // If name changed, trigger cascade updates
       const renameMap = oldName !== cleanName ? { oldName, newName: cleanName } : undefined;
       onCategoriesChange(updatedCategories, renameMap);
     } else {
-      // Add mode
       const newCategory: Category = {
         id: `cat_custom_${Date.now()}`,
         name: cleanName,
@@ -117,7 +111,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
   };
 
   const handleDelete = (category: Category) => {
-    // Check if category is in use
     const transactionCount = transactions.filter(t => t.category === category.name).length;
     const budgetCount = budgets.filter(b => b.category === category.name).length;
 
@@ -142,7 +135,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center modal-overlay">
       <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[90vh] flex flex-col modal-content modal-fullscreen-mobile">
-        {/* Header */}
         <div className="p-4 sm:p-6 border-b border-gray-100 flex justify-between items-center flex-shrink-0">
           <h2 className="text-lg sm:text-xl font-bold text-gray-800">Quản Lý Danh Mục</h2>
           <button
@@ -156,7 +148,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
           </button>
         </div>
 
-        {/* Form panel for Add/Edit */}
         {isFormOpen ? (
           <form onSubmit={handleSave} className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1">
             <h3 className="text-base font-bold text-gray-700">
@@ -169,7 +160,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
               </div>
             )}
 
-            {/* Icon & Name input */}
             <div className="flex gap-3">
               <div className="relative">
                 <button
@@ -211,7 +201,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
               </div>
             </div>
 
-            {/* Keywords */}
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">
                 Từ khóa tự động nhận diện <span className="text-gray-400 font-normal">(ngăn cách bằng dấu phẩy)</span>
@@ -228,7 +217,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
               </p>
             </div>
 
-            {/* Form buttons */}
             <div className="flex gap-3 pt-2">
               <button
                 type="button"
@@ -246,9 +234,7 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
             </div>
           </form>
         ) : (
-          /* Main view: Categories list */
           <div className="flex-1 overflow-y-auto flex flex-col">
-            {/* Tabs */}
             <div className="p-4 bg-gray-50 border-b border-gray-100 flex-shrink-0 flex gap-2">
               <button
                 onClick={() => setActiveTab('EXPENSE')}
@@ -272,7 +258,6 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
               </button>
             </div>
 
-            {/* List */}
             <div className="flex-1 p-4 space-y-2 overflow-y-auto min-h-[250px]">
               {filteredCategories.length > 0 ? (
                 filteredCategories.map(cat => (
@@ -319,14 +304,13 @@ const CategoryModal: React.FC<CategoryModalProps> = ({
               )}
             </div>
 
-            {/* Footer with ADD button */}
             <div className="p-4 sm:p-6 border-t border-gray-100 bg-white flex-shrink-0">
               <button
                 onClick={() => handleOpenForm()}
                 className={`w-full py-4 rounded-xl font-bold text-white shadow-lg transition-all active:scale-[0.98] ${
                   activeTab === 'EXPENSE'
                     ? 'bg-rose-500 hover:bg-rose-600 shadow-rose-100'
-                    : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-100'
+                    : 'bg-emerald-50 hover:bg-emerald-600 shadow-emerald-100'
                 }`}
               >
                 + Thêm danh mục mới

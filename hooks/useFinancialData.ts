@@ -1,0 +1,1151 @@
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { User } from '@supabase/supabase-js';
+import {
+  Transaction,
+  Budget,
+  Category,
+  Debt,
+  GiftRecord,
+  AIAdvice,
+  GiftDirection,
+  GiftEventType,
+  DebtType,
+  SyncPayload
+} from '../types';
+import { supabase } from '../services/supabase.service';
+import * as OfflineDB from '../services/offline.service';
+import * as SyncService from '../services/sync.service';
+import * as NotificationService from '../services/notification.service';
+import { NotificationAlert } from '../services/notification.service';
+import { useNetworkStatus } from './useNetworkStatus';
+import { autoCategorize, getCategories, saveCategories, DEFAULT_CATEGORIES } from '../constants';
+import { getFinancialAdvice } from '../services/geminiService';
+
+export function useFinancialData(user: User | null) {
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [categories, setCategories] = useState<Category[]>(() => getCategories());
+  const [debts, setDebts] = useState<Debt[]>([]);
+  const [gifts, setGifts] = useState<GiftRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // AI Insights State
+  const [aiAdvice, setAiAdvice] = useState<AIAdvice | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
+
+  // Pending sync count for UI badge
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+
+  // Refs to hold latest load functions (avoids circular deps in network reconnect effect)
+  const loadTransactionsRef = useRef<(() => Promise<void>) | null>(null);
+  const loadDebtsRef = useRef<(() => Promise<void>) | null>(null);
+  const loadGiftsRef = useRef<(() => Promise<void>) | null>(null);
+  const loadBudgetsRef = useRef<(() => Promise<void>) | null>(null);
+  const loadCategoriesRef = useRef<(() => Promise<void>) | null>(null);
+
+  // Refresh pending count helper
+  const refreshPendingCount = useCallback(async () => {
+    const count = await SyncService.getPendingCount();
+    setPendingSyncCount(count);
+  }, []);
+
+  // Sync handler: process queue + reload all data
+  const handleSync = useCallback(async () => {
+    const result = await SyncService.processQueue();
+    if (user) {
+      await Promise.all([
+        loadTransactionsRef.current?.(),
+        loadDebtsRef.current?.(),
+        loadGiftsRef.current?.(),
+        loadBudgetsRef.current?.(),
+      ]);
+    }
+    await refreshPendingCount();
+    return result;
+  }, [user, refreshPendingCount]);
+
+  // Network status hook
+  const { isOnline, isSyncing, syncResult, dismissSyncResult } = useNetworkStatus({
+    onReconnect: handleSync,
+  });
+
+  // Helper to run auto-categorization on a list of transactions
+  const autoCategorizeTransactions = useCallback(async (rawTxList: Transaction[], updateDb: boolean) => {
+    if (rawTxList.length === 0) return [];
+    
+    const dbUpdates: { id: string; category: string }[] = [];
+
+    const processed = await Promise.all(rawTxList.map(async t => {
+      let category = t.category;
+      if (category === 'Chuyển khoản đi' || category === 'Chuyển khoản nhận' || category === 'Khác') {
+        const autoCat = autoCategorize(t.description, categories);
+        if (autoCat && autoCat.type === t.type) {
+          category = autoCat.category;
+          if (updateDb && !t.id.startsWith('temp_')) {
+            dbUpdates.push({ id: t.id, category });
+            OfflineDB.put('transactions', { ...t, category }).then();
+          }
+        }
+      }
+      return { ...t, category };
+    }));
+
+    if (dbUpdates.length > 0 && navigator.onLine) {
+      (async () => {
+        for (const item of dbUpdates) {
+          try {
+            await supabase.from('transactions').update({ category: item.category }).eq('id', item.id);
+            await new Promise(resolve => setTimeout(resolve, 150)); // 150ms throttle delay
+          } catch (err) {
+            console.error('Error auto-updating category in background DB:', err);
+          }
+        }
+      })();
+    }
+
+    return processed;
+  }, [categories]);
+
+  // Load transactions — online: fetch from Supabase + cache; offline: read IndexedDB
+  const loadTransactions = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('transaction_date', { ascending: false })
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        const mappedTransactions: Transaction[] = (data || []).map(t => ({
+          id: t.id,
+          amount: parseFloat(t.amount),
+          category: t.category || 'Khác',
+          description: t.description || '',
+          date: t.transaction_date,
+          type: t.type === 'income' ? 'INCOME' : 'EXPENSE',
+          receipt_url: t.receipt_url || undefined
+        }));
+
+        const processed = await autoCategorizeTransactions(mappedTransactions, true);
+        setTransactions(processed);
+        await OfflineDB.clearStore('transactions');
+        await OfflineDB.putAll('transactions', processed);
+      } else {
+        const cached = await OfflineDB.getAll<Transaction>('transactions');
+        cached.sort((a, b) => b.date.localeCompare(a.date));
+        const processed = await autoCategorizeTransactions(cached, false);
+        setTransactions(processed);
+      }
+    } catch (error) {
+      console.error('Error loading transactions:', error);
+      const cached = await OfflineDB.getAll<Transaction>('transactions');
+      cached.sort((a, b) => b.date.localeCompare(a.date));
+      const processed = await autoCategorizeTransactions(cached, false);
+      setTransactions(processed);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user, autoCategorizeTransactions]);
+
+  loadTransactionsRef.current = loadTransactions;
+
+  // Load categories from Supabase (or fallback to IndexedDB / localStorage)
+  const loadCategories = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('categories')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          const fetchedCategories: Category[] = data.map(c => ({
+            id: c.id,
+            name: c.name,
+            icon: c.icon,
+            type: c.type as 'INCOME' | 'EXPENSE',
+            keywords: c.keywords || []
+          }));
+          setCategories(fetchedCategories);
+          saveCategories(fetchedCategories);
+          await OfflineDB.clearStore('categories');
+          await OfflineDB.putAll('categories', fetchedCategories);
+          return;
+        } else {
+          // If no categories in Supabase (new user), upload default categories
+          const { error: insertError } = await supabase
+            .from('categories')
+            .insert(
+              DEFAULT_CATEGORIES.map(c => ({
+                id: c.id,
+                user_id: user.id,
+                name: c.name,
+                icon: c.icon,
+                type: c.type,
+                keywords: c.keywords
+              }))
+            );
+          if (insertError) {
+            console.error('Failed to upload default categories:', insertError);
+          }
+          setCategories(DEFAULT_CATEGORIES);
+          saveCategories(DEFAULT_CATEGORIES);
+          await OfflineDB.clearStore('categories');
+          await OfflineDB.putAll('categories', DEFAULT_CATEGORIES);
+          return;
+        }
+      }
+
+      const cached = await OfflineDB.getAll<Category>('categories');
+      if (cached && cached.length > 0) {
+        setCategories(cached);
+        saveCategories(cached);
+      } else {
+        setCategories(DEFAULT_CATEGORIES);
+        saveCategories(DEFAULT_CATEGORIES);
+      }
+    } catch (error) {
+      console.error('Error loading categories:', error);
+      const cached = await OfflineDB.getAll<Category>('categories');
+      if (cached && cached.length > 0) {
+        setCategories(cached);
+        saveCategories(cached);
+      } else {
+        const localSaved = getCategories();
+        setCategories(localSaved);
+      }
+    }
+  }, [user]);
+
+  loadCategoriesRef.current = loadCategories;
+
+  // Handle categories changes (add/edit/delete) with cascade updates for renames
+  const handleCategoriesChange = useCallback(async (newCategories: Category[], renameMap?: { oldName: string; newName: string }) => {
+    setCategories(newCategories);
+    saveCategories(newCategories);
+
+    if (user) {
+      const addedOrUpdated = newCategories.filter(nc => {
+        const old = categories.find(oc => oc.id === nc.id);
+        return !old || old.name !== nc.name || old.icon !== nc.icon || JSON.stringify(old.keywords) !== JSON.stringify(nc.keywords);
+      });
+
+      const deleted = categories.filter(oc => !newCategories.some(nc => nc.id === oc.id));
+
+      // Process added or updated items
+      for (const item of addedOrUpdated) {
+        const isNew = !categories.some(oc => oc.id === item.id);
+        const action = isNew ? 'INSERT' : 'UPDATE';
+
+        await OfflineDB.put('categories', item);
+
+        const payload: SyncPayload = {
+          table: 'categories',
+          action: isNew ? 'INSERT' : 'UPDATE',
+          data: {
+            id: item.id,
+            user_id: user.id,
+            name: item.name,
+            icon: item.icon,
+            type: item.type,
+            keywords: item.keywords
+          }
+        };
+
+        if (navigator.onLine) {
+          try {
+            if (isNew) {
+              const { error } = await supabase.from('categories').insert([payload.data]);
+              if (error) throw error;
+            } else {
+              const { error } = await supabase
+                .from('categories')
+                .update({ name: item.name, icon: item.icon, type: item.type, keywords: item.keywords })
+                .eq('id', item.id)
+                .eq('user_id', user.id);
+              if (error) throw error;
+            }
+          } catch (err) {
+            console.error(`Failed to online sync category ${action}, queuing:`, err);
+            await SyncService.addToQueue(payload);
+            await refreshPendingCount();
+          }
+        } else {
+          await SyncService.addToQueue(payload);
+          await refreshPendingCount();
+        }
+      }
+
+      // Process deleted items
+      for (const item of deleted) {
+        await OfflineDB.deleteById('categories', item.id);
+
+        const payload: SyncPayload = {
+          table: 'categories',
+          action: 'DELETE',
+          data: { id: item.id, user_id: user.id }
+        };
+
+        if (navigator.onLine) {
+          try {
+            const { error } = await supabase
+              .from('categories')
+              .delete()
+              .eq('id', item.id)
+              .eq('user_id', user.id);
+            if (error) throw error;
+          } catch (err) {
+            console.error('Failed to online delete category, queuing:', err);
+            await SyncService.addToQueue(payload);
+            await refreshPendingCount();
+          }
+        } else {
+          await SyncService.addToQueue(payload);
+          await refreshPendingCount();
+        }
+      }
+    }
+
+    // Cascade update transaction and budget categories if renamed
+    if (renameMap && user) {
+      const { oldName, newName } = renameMap;
+
+      setTransactions(prev => prev.map(t => 
+        t.category === oldName ? { ...t, category: newName } : t
+      ));
+
+      try {
+        const cachedTxs = await OfflineDB.getAll<Transaction>('transactions');
+        const updatedCachedTxs = cachedTxs.map(t => 
+          t.category === oldName ? { ...t, category: newName } : t
+        );
+        await OfflineDB.clearStore('transactions');
+        await OfflineDB.putAll('transactions', updatedCachedTxs);
+
+        if (navigator.onLine) {
+          const { error } = await supabase
+            .from('transactions')
+            .update({ category: newName })
+            .eq('category', oldName)
+            .eq('user_id', user.id);
+          if (error) throw error;
+        } else {
+          const affected = cachedTxs.filter(t => t.category === oldName);
+          for (const tx of affected) {
+            await SyncService.addToQueue({
+              table: 'transactions',
+              action: 'UPDATE',
+              data: { id: tx.id, user_id: user.id, category: newName }
+            });
+          }
+          await refreshPendingCount();
+        }
+      } catch (err) {
+        console.error('Failed to cascade update transaction categories:', err);
+      }
+
+      setBudgets(prev => prev.map(b => 
+        b.category === oldName ? { ...b, category: newName } : b
+      ));
+
+      try {
+        const cachedBudgets = await OfflineDB.getAll<Budget>('budgets');
+        const updatedCachedBudgets = cachedBudgets.map(b => 
+          b.category === oldName ? { ...b, category: newName } : b
+        );
+        await OfflineDB.clearStore('budgets');
+        await OfflineDB.putAll('budgets', updatedCachedBudgets);
+
+        if (navigator.onLine) {
+          const { error } = await supabase
+            .from('budgets')
+            .update({ category: newName })
+            .eq('category', oldName)
+            .eq('user_id', user.id);
+          if (error) throw error;
+        } else {
+          const affected = cachedBudgets.filter(b => b.category === oldName);
+          for (const b of affected) {
+            await SyncService.addToQueue({
+              table: 'budgets',
+              action: 'UPDATE',
+              data: { id: b.id, user_id: user.id, category: newName }
+            });
+          }
+          await refreshPendingCount();
+        }
+      } catch (err) {
+        console.error('Failed to cascade update budget categories:', err);
+      }
+    }
+  }, [user, categories, refreshPendingCount]);
+
+  // Load budgets — online: Supabase + cache; offline: IndexedDB
+  const loadBudgets = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('budgets')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (error) throw error;
+
+        const mapped: Budget[] = (data || []).map(b => ({
+          id: b.id,
+          category: b.category,
+          limit: parseFloat(b.budget_limit),
+          period: b.period || 'monthly',
+        }));
+
+        setBudgets(mapped);
+        await OfflineDB.clearStore('budgets');
+        await OfflineDB.putAll('budgets', mapped);
+      } else {
+        const cached = await OfflineDB.getAll<Budget>('budgets');
+        setBudgets(cached);
+      }
+    } catch (error) {
+      console.error('Error loading budgets:', error);
+      const cached = await OfflineDB.getAll<Budget>('budgets');
+      setBudgets(cached);
+    }
+  }, [user]);
+
+  loadBudgetsRef.current = loadBudgets;
+
+  // Load debts — online: Supabase + cache; offline: IndexedDB
+  const loadDebts = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('debts')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        const mappedDebts: Debt[] = (data || []).map(d => ({
+          id: d.id,
+          user_id: d.user_id,
+          type: d.type as DebtType,
+          person_name: d.person_name,
+          original_amount: parseFloat(d.original_amount),
+          paid_amount: parseFloat(d.paid_amount || 0),
+          remaining_amount: parseFloat(d.original_amount) - parseFloat(d.paid_amount || 0),
+          created_date: d.created_date,
+          due_date: d.due_date || undefined,
+          description: d.description || undefined,
+          status: d.status as 'pending' | 'partial' | 'completed'
+        }));
+
+        setDebts(mappedDebts);
+        await OfflineDB.clearStore('debts');
+        await OfflineDB.putAll('debts', mappedDebts);
+      } else {
+        const cached = await OfflineDB.getAll<Debt>('debts');
+        setDebts(cached);
+      }
+    } catch (error) {
+      console.error('Error loading debts:', error);
+      const cached = await OfflineDB.getAll<Debt>('debts');
+      setDebts(cached);
+    }
+  }, [user]);
+
+  loadDebtsRef.current = loadDebts;
+
+  // Load gifts — online: Supabase + cache; offline: IndexedDB
+  const loadGifts = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('gift_records')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('event_date', { ascending: false });
+
+        if (error) throw error;
+
+        const mappedGifts: GiftRecord[] = (data || []).map(g => ({
+          id: g.id,
+          user_id: g.user_id,
+          direction: g.direction as GiftDirection,
+          person_name: g.person_name,
+          event_type: g.event_type as GiftEventType,
+          amount: parseFloat(g.amount),
+          event_date: g.event_date,
+          note: g.note || undefined
+        }));
+
+        setGifts(mappedGifts);
+        await OfflineDB.clearStore('gift_records');
+        await OfflineDB.putAll('gift_records', mappedGifts);
+      } else {
+        const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
+        setGifts(cached);
+      }
+    } catch (error) {
+      console.error('Error loading gifts:', error);
+      const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
+      setGifts(cached);
+    }
+  }, [user]);
+
+  loadGiftsRef.current = loadGifts;
+
+  // Initialize data: Load offline first, then fetch fresh in background
+  useEffect(() => {
+    if (user) {
+      const initData = async () => {
+        try {
+          const [cachedCats, cachedTxs, cachedBudgets, cachedDebts, cachedGifts] = await Promise.all([
+            OfflineDB.getAll<Category>('categories'),
+            OfflineDB.getAll<Transaction>('transactions'),
+            OfflineDB.getAll<Budget>('budgets'),
+            OfflineDB.getAll<Debt>('debts'),
+            OfflineDB.getAll<GiftRecord>('gift_records'),
+          ]);
+
+          if (cachedCats && cachedCats.length > 0) setCategories(cachedCats);
+          if (cachedTxs && cachedTxs.length > 0) {
+            cachedTxs.sort((a, b) => b.date.localeCompare(a.date));
+            setTransactions(cachedTxs);
+          }
+          if (cachedBudgets && cachedBudgets.length > 0) setBudgets(cachedBudgets);
+          if (cachedDebts && cachedDebts.length > 0) setDebts(cachedDebts);
+          if (cachedGifts && cachedGifts.length > 0) setGifts(cachedGifts);
+
+          setIsLoading(false);
+
+          if (navigator.onLine) {
+            Promise.all([
+              loadCategoriesRef.current ? loadCategoriesRef.current() : Promise.resolve(),
+              loadTransactionsRef.current ? loadTransactionsRef.current() : Promise.resolve(),
+              loadBudgetsRef.current ? loadBudgetsRef.current() : Promise.resolve(),
+              loadDebtsRef.current ? loadDebtsRef.current() : Promise.resolve(),
+              loadGiftsRef.current ? loadGiftsRef.current() : Promise.resolve(),
+            ]).catch(err => console.error('Failed to reload fresh data in background:', err));
+          }
+        } catch (err) {
+          console.error('Error during local-first data load:', err);
+          setIsLoading(false);
+        }
+      };
+
+      initData();
+      refreshPendingCount();
+    } else {
+      // Clear data on logout
+      setCategories(DEFAULT_CATEGORIES);
+      setTransactions([]);
+      setBudgets([]);
+      setDebts([]);
+      setGifts([]);
+      setIsLoading(false);
+    }
+  }, [user, refreshPendingCount]);
+
+  // Reschedule all local notifications when data changes
+  useEffect(() => {
+    if (!user || isLoading) return;
+    NotificationService.rescheduleAll(debts, budgets, transactions);
+  }, [user, debts, budgets, transactions, isLoading]);
+
+  // Realtime subscription: auto-update when webhook creates new transactions (e.g. Sepay)
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('transactions-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'transactions',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const t = payload.new;
+          if (t.source === 'sepay') {
+            const newTx: Transaction = {
+              id: t.id,
+              amount: parseFloat(t.amount),
+              category: t.category || 'Khác',
+              description: t.description || '',
+              date: t.transaction_date,
+              type: t.type === 'income' ? 'INCOME' : 'EXPENSE',
+              receipt_url: t.receipt_url || undefined,
+            };
+            
+            let category = newTx.category;
+            if (category === 'Chuyển khoản đi' || category === 'Chuyển khoản nhận' || category === 'Khác') {
+              const autoCat = autoCategorize(newTx.description, categories);
+              if (autoCat && autoCat.type === newTx.type) {
+                category = autoCat.category;
+                supabase.from('transactions').update({ category }).eq('id', newTx.id).then(({ error }) => {
+                  if (error) console.error('Error auto-updating realtime category in DB:', error);
+                });
+                OfflineDB.put('transactions', { ...newTx, category }).then();
+              }
+            }
+            
+            setTransactions((prev) => [{ ...newTx, category }, ...prev]);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, categories]);
+
+  // Actions
+  const handleAddTransaction = useCallback(async (newTx: Omit<Transaction, 'id'>) => {
+    if (!user) return;
+
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const tx: Transaction = {
+      id: tempId,
+      amount: newTx.amount,
+      category: newTx.category,
+      description: newTx.description,
+      date: newTx.date,
+      type: newTx.type,
+      receipt_url: newTx.receipt_url || undefined,
+    };
+
+    setTransactions(prev => [tx, ...prev]);
+    await OfflineDB.put('transactions', tx);
+
+    const syncItem: SyncPayload = {
+      table: 'transactions',
+      action: 'INSERT',
+      data: {
+        _tempId: tempId,
+        user_id: user.id,
+        type: newTx.type === 'INCOME' ? 'income' : 'expense',
+        amount: newTx.amount,
+        category: newTx.category,
+        description: newTx.description,
+        transaction_date: newTx.date,
+        currency: 'VND',
+        receipt_url: newTx.receipt_url || null,
+      }
+    };
+
+    if (navigator.onLine) {
+      try {
+        const { _tempId, ...serverData } = syncItem.data;
+        const { data, error } = await supabase
+          .from('transactions')
+          .insert([serverData])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        const serverTx: Transaction = {
+          id: data.id,
+          amount: parseFloat(data.amount),
+          category: data.category || 'Khác',
+          description: data.description || '',
+          date: data.transaction_date,
+          type: newTx.type,
+          receipt_url: data.receipt_url || undefined,
+        };
+        setTransactions(prev => prev.map(t => t.id === tempId ? serverTx : t));
+        await OfflineDB.deleteById('transactions', tempId);
+        await OfflineDB.put('transactions', serverTx);
+      } catch (error) {
+        console.error('Online insert failed, queuing for sync:', error);
+        await SyncService.addToQueue(syncItem);
+        await refreshPendingCount();
+      }
+    } else {
+      await SyncService.addToQueue(syncItem);
+      await refreshPendingCount();
+    }
+  }, [user, refreshPendingCount]);
+
+  const handleDeleteTransaction = useCallback(async (id: string) => {
+    if (!user) return;
+
+    setTransactions(prev => prev.filter(t => t.id !== id));
+    await OfflineDB.deleteById('transactions', id);
+
+    if (!id.startsWith('temp_')) {
+      const syncItem: SyncPayload = {
+        table: 'transactions',
+        action: 'DELETE',
+        data: { id, user_id: user.id }
+      };
+
+      if (navigator.onLine) {
+        try {
+          const { error } = await supabase
+            .from('transactions')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', user.id);
+          if (error) throw error;
+        } catch (error) {
+          console.error('Online delete failed, queuing:', error);
+          await SyncService.addToQueue(syncItem);
+          await refreshPendingCount();
+        }
+      } else {
+        await SyncService.addToQueue(syncItem);
+        await refreshPendingCount();
+      }
+    }
+  }, [user, refreshPendingCount]);
+
+  const handleUpdateTransaction = useCallback(async (id: string, description: string, category?: string) => {
+    if (!user) return;
+
+    let targetCategory = category;
+    const currentTx = transactions.find(t => t.id === id);
+    
+    if (!targetCategory && currentTx) {
+      const isDefaultCat = currentTx.category === 'Chuyển khoản đi' || currentTx.category === 'Chuyển khoản nhận' || currentTx.category === 'Khác';
+      if (isDefaultCat) {
+        const autoCat = autoCategorize(description);
+        if (autoCat && autoCat.type === currentTx.type) {
+          targetCategory = autoCat.category;
+        }
+      }
+    }
+
+    if (!targetCategory && currentTx) {
+      targetCategory = currentTx.category;
+    }
+
+    const finalCategory = targetCategory || 'Khác';
+
+    setTransactions(prev => prev.map(t =>
+      t.id === id ? { ...t, description, category: finalCategory } : t
+    ));
+
+    const existing = await OfflineDB.getById<Transaction>('transactions', id);
+    if (existing) {
+      await OfflineDB.put('transactions', { ...existing, description, category: finalCategory });
+    }
+
+    if (!id.startsWith('temp_')) {
+      const syncItem: SyncPayload = {
+        table: 'transactions',
+        action: 'UPDATE',
+        data: { id, user_id: user.id, description, category: finalCategory }
+      };
+
+      if (navigator.onLine) {
+        try {
+          const { error } = await supabase
+            .from('transactions')
+            .update({ description, category: finalCategory })
+            .eq('id', id)
+            .eq('user_id', user.id);
+          if (error) throw error;
+        } catch (error) {
+          console.error('Online update failed, queuing:', error);
+          await SyncService.addToQueue(syncItem);
+          await refreshPendingCount();
+        }
+      } else {
+        await SyncService.addToQueue(syncItem);
+        await refreshPendingCount();
+      }
+    }
+  }, [user, transactions, refreshPendingCount]);
+
+  const handleSaveBudgets = useCallback(async (newBudgets: Budget[]) => {
+    if (!user) return;
+
+    setBudgets(newBudgets);
+    await OfflineDB.clearStore('budgets');
+    await OfflineDB.putAll('budgets', newBudgets);
+
+    if (navigator.onLine) {
+      try {
+        const { error: deleteError } = await supabase
+          .from('budgets')
+          .delete()
+          .eq('user_id', user.id);
+        if (deleteError) throw deleteError;
+
+        if (newBudgets.length > 0) {
+          const { error: insertError } = await supabase
+            .from('budgets')
+            .insert(newBudgets.map(b => ({
+              user_id: user.id,
+              category: b.category,
+              budget_limit: b.limit,
+              period: b.period,
+            })));
+          if (insertError) throw insertError;
+        }
+        await loadBudgets();
+      } catch (error) {
+        console.error('Online budget save failed, queuing:', error);
+        
+        await SyncService.addToQueue({
+          table: 'budgets',
+          action: 'DELETE',
+          data: { user_id: user.id },
+        });
+        for (const b of newBudgets) {
+          await SyncService.addToQueue({
+            table: 'budgets',
+            action: 'INSERT',
+            data: {
+              _tempId: b.id,
+              user_id: user.id,
+              category: b.category,
+              budget_limit: b.limit,
+              period: b.period,
+            },
+          });
+        }
+        await refreshPendingCount();
+      }
+    } else {
+      await SyncService.addToQueue({
+        table: 'budgets',
+        action: 'DELETE',
+        data: { user_id: user.id },
+      });
+      for (const b of newBudgets) {
+        await SyncService.addToQueue({
+          table: 'budgets',
+          action: 'INSERT',
+          data: {
+            _tempId: b.id,
+            user_id: user.id,
+            category: b.category,
+            budget_limit: b.limit,
+            period: b.period,
+          },
+        });
+      }
+      await refreshPendingCount();
+    }
+  }, [user, loadBudgets, refreshPendingCount]);
+
+  const handleAddDebt = useCallback(async (newDebt: {
+    type: DebtType;
+    person_name: string;
+    original_amount: number;
+    created_date: string;
+    due_date?: string;
+    description?: string;
+  }) => {
+    if (!user) return;
+
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const localDebt: Debt = {
+      id: tempId,
+      user_id: user.id,
+      type: newDebt.type,
+      person_name: newDebt.person_name,
+      original_amount: newDebt.original_amount,
+      paid_amount: 0,
+      remaining_amount: newDebt.original_amount,
+      created_date: newDebt.created_date,
+      due_date: newDebt.due_date,
+      description: newDebt.description,
+      status: 'pending',
+    };
+
+    setDebts(prev => [localDebt, ...prev]);
+    await OfflineDB.put('debts', localDebt);
+
+    const syncItem: SyncPayload = {
+      table: 'debts',
+      action: 'INSERT',
+      data: {
+        _tempId: tempId,
+        user_id: user.id,
+        type: newDebt.type,
+        person_name: newDebt.person_name,
+        original_amount: newDebt.original_amount,
+        created_date: newDebt.created_date,
+        due_date: newDebt.due_date || null,
+        description: newDebt.description || null,
+        status: 'pending',
+      }
+    };
+
+    if (navigator.onLine) {
+      try {
+        const { _tempId, ...serverData } = syncItem.data;
+        const { error } = await supabase.from('debts').insert([serverData]);
+        if (error) throw error;
+        await loadDebts();
+      } catch (error) {
+        console.error('Online insert failed, queuing:', error);
+        await SyncService.addToQueue(syncItem);
+        await refreshPendingCount();
+      }
+    } else {
+      await SyncService.addToQueue(syncItem);
+      await refreshPendingCount();
+    }
+  }, [user, loadDebts, refreshPendingCount]);
+
+  const handleDeleteDebt = useCallback(async (id: string) => {
+    if (!user) return;
+
+    setDebts(prev => prev.filter(d => d.id !== id));
+    await OfflineDB.deleteById('debts', id);
+
+    if (!id.startsWith('temp_')) {
+      const syncItem: SyncPayload = {
+        table: 'debts',
+        action: 'DELETE',
+        data: { id, user_id: user.id }
+      };
+
+      if (navigator.onLine) {
+        try {
+          const { error } = await supabase
+            .from('debts')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', user.id);
+          if (error) throw error;
+        } catch (error) {
+          console.error('Online delete failed, queuing:', error);
+          await SyncService.addToQueue(syncItem);
+          await refreshPendingCount();
+        }
+      } else {
+        await SyncService.addToQueue(syncItem);
+        await refreshPendingCount();
+      }
+    }
+  }, [user, refreshPendingCount]);
+
+  const handleAddGift = useCallback(async (newGift: {
+    direction: GiftDirection;
+    person_name: string;
+    event_type: GiftEventType;
+    amount: number;
+    event_date: string;
+    note?: string;
+  }) => {
+    if (!user) return;
+
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const localGift: GiftRecord = {
+      id: tempId,
+      user_id: user.id,
+      direction: newGift.direction,
+      person_name: newGift.person_name,
+      event_type: newGift.event_type,
+      amount: newGift.amount,
+      event_date: newGift.event_date,
+      note: newGift.note,
+    };
+
+    setGifts(prev => [localGift, ...prev]);
+    await OfflineDB.put('gift_records', localGift);
+
+    const syncItem: SyncPayload = {
+      table: 'gift_records',
+      action: 'INSERT',
+      data: {
+        _tempId: tempId,
+        user_id: user.id,
+        direction: newGift.direction,
+        person_name: newGift.person_name,
+        event_type: newGift.event_type,
+        amount: newGift.amount,
+        event_date: newGift.event_date,
+        note: newGift.note || null,
+      }
+    };
+
+    if (navigator.onLine) {
+      try {
+        const { _tempId, ...serverData } = syncItem.data;
+        const { error } = await supabase.from('gift_records').insert([serverData]);
+        if (error) throw error;
+        await loadGifts();
+      } catch (error) {
+        console.error('Online insert failed, queuing:', error);
+        await SyncService.addToQueue(syncItem);
+        await refreshPendingCount();
+      }
+    } else {
+      await SyncService.addToQueue(syncItem);
+      await refreshPendingCount();
+    }
+  }, [user, loadGifts, refreshPendingCount]);
+
+  const handleDeleteGift = useCallback(async (id: string) => {
+    if (!user) return;
+
+    setGifts(prev => prev.filter(g => g.id !== id));
+    await OfflineDB.deleteById('gift_records', id);
+
+    if (!id.startsWith('temp_')) {
+      const syncItem: SyncPayload = {
+        table: 'gift_records',
+        action: 'DELETE',
+        data: { id, user_id: user.id }
+      };
+
+      if (navigator.onLine) {
+        try {
+          const { error } = await supabase
+            .from('gift_records')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', user.id);
+          if (error) throw error;
+        } catch (error) {
+          console.error('Online delete failed, queuing:', error);
+          await SyncService.addToQueue(syncItem);
+          await refreshPendingCount();
+        }
+      } else {
+        await SyncService.addToQueue(syncItem);
+        await refreshPendingCount();
+      }
+    }
+  }, [user, refreshPendingCount]);
+
+  const handleGetAiAdvice = useCallback(async () => {
+    if (transactions.length === 0) return;
+    setIsAiLoading(true);
+    try {
+      const advice = await getFinancialAdvice(transactions);
+      setAiAdvice(advice);
+    } catch (err) {
+      console.error('Gemini API advisor failed:', err);
+    } finally {
+      setIsAiLoading(false);
+    }
+  }, [transactions]);
+
+  const clearAllData = useCallback(() => {
+    setTransactions([]);
+    setDebts([]);
+    setGifts([]);
+    setBudgets([]);
+    setCategories(DEFAULT_CATEGORIES);
+    setAiAdvice(null);
+  }, []);
+
+  // Computed states
+  const stats = useMemo(() => {
+    const income = transactions.filter(t => t.type === 'INCOME').reduce((acc, curr) => acc + curr.amount, 0);
+    const expense = transactions.filter(t => t.type === 'EXPENSE').reduce((acc, curr) => acc + curr.amount, 0);
+    return {
+      totalIncome: income,
+      totalExpense: expense,
+      balance: income - expense
+    };
+  }, [transactions]);
+
+  const pieData = useMemo(() => {
+    const summary: Record<string, number> = {};
+    transactions
+      .filter(t => t.type === 'EXPENSE')
+      .forEach(t => {
+        summary[t.category] = (summary[t.category] || 0) + t.amount;
+      });
+    return Object.entries(summary).map(([name, value]) => ({ name, value }));
+  }, [transactions]);
+
+  const barData = useMemo(() => {
+    const dates: Record<string, { income: number; expense: number }> = {};
+    transactions.slice(-10).forEach(t => {
+      const date = t.date;
+      if (!dates[date]) dates[date] = { income: 0, expense: 0 };
+      if (t.type === 'INCOME') dates[date].income += t.amount;
+      else dates[date].expense += t.amount;
+    });
+    return Object.entries(dates).map(([date, values]) => ({ date, ...values }));
+  }, [transactions]);
+
+  const debtStats = useMemo(() => {
+    const receivable = debts
+      .filter(d => d.type === 'receivable')
+      .reduce((sum, d) => sum + d.remaining_amount, 0);
+    const payable = debts
+      .filter(d => d.type === 'payable')
+      .reduce((sum, d) => sum + d.remaining_amount, 0);
+    return { receivable, payable, net: receivable - payable };
+  }, [debts]);
+
+  const giftStats = useMemo(() => {
+    const given = gifts
+      .filter(g => g.direction === 'given')
+      .reduce((sum, g) => sum + g.amount, 0);
+    const received = gifts
+      .filter(g => g.direction === 'received')
+      .reduce((sum, g) => sum + g.amount, 0);
+    return { given, received, net: received - given };
+  }, [gifts]);
+
+  const activeAlerts = useMemo<NotificationAlert[]>(() => {
+    if (!user) return [];
+    return NotificationService.getActiveAlerts(debts, budgets, transactions);
+  }, [user, debts, budgets, transactions]);
+
+  return {
+    transactions,
+    budgets,
+    categories,
+    debts,
+    gifts,
+    isLoading,
+    pendingSyncCount,
+    aiAdvice,
+    isAiLoading,
+    isOnline,
+    isSyncing,
+    syncResult,
+    dismissSyncResult,
+    stats,
+    pieData,
+    barData,
+    debtStats,
+    giftStats,
+    activeAlerts,
+    loadDebts,
+    loadGifts,
+    handleAddTransaction,
+    handleDeleteTransaction,
+    handleUpdateTransaction,
+    handleSaveBudgets,
+    handleAddDebt,
+    handleDeleteDebt,
+    handleAddGift,
+    handleDeleteGift,
+    handleCategoriesChange,
+    handleGetAiAdvice,
+    handleSync,
+    clearAllData,
+  };
+}

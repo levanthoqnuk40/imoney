@@ -5,32 +5,29 @@
 
 import { supabase, StorageService } from './supabase.service';
 import * as OfflineDB from './offline.service';
+import { SyncPayload } from '../types';
 
-export interface SyncQueueItem {
+export type SyncQueueItem = {
     id: string;
-    table: 'transactions' | 'debts' | 'debt_payments' | 'gift_records' | 'budgets' | 'categories';
-    action: 'INSERT' | 'UPDATE' | 'DELETE';
-    data: Record<string, any>;
-    /** base64 receipt data to upload when online */
-    pendingReceiptBase64?: string;
-    pendingReceiptFileName?: string;
     timestamp: number;
     retryCount: number;
-}
+    pendingReceiptBase64?: string;
+    pendingReceiptFileName?: string;
+} & SyncPayload;
 
 const MAX_RETRIES = 3;
 
 // ------- Queue operations -------
 
 export async function addToQueue(
-    item: Omit<SyncQueueItem, 'id' | 'timestamp' | 'retryCount'>,
+    item: SyncPayload & { pendingReceiptBase64?: string; pendingReceiptFileName?: string },
 ): Promise<void> {
     const queueItem: SyncQueueItem = {
         ...item,
         id: `sync_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
         timestamp: Date.now(),
         retryCount: 0,
-    };
+    } as SyncQueueItem;
     await OfflineDB.put('sync_queue', queueItem);
 }
 
@@ -84,56 +81,48 @@ export async function processQueue(): Promise<SyncResult> {
 async function processSingleItem(item: SyncQueueItem): Promise<void> {
     const { table, action, data } = item;
 
-    switch (action) {
-        case 'INSERT': {
-            let insertData = { ...data };
+    if (action === 'INSERT') {
+        const insertData = { ...data } as any;
 
-            // Handle pending receipt upload
-            if (item.pendingReceiptBase64 && item.pendingReceiptFileName) {
-                try {
-                    const blob = base64ToBlob(item.pendingReceiptBase64);
-                    const file = new File([blob], item.pendingReceiptFileName, { type: blob.type });
-                    const url = await StorageService.uploadReceipt(file);
-                    if (url) {
-                        insertData.receipt_url = url;
-                    }
-                } catch {
-                    // If receipt upload fails, still insert the transaction without receipt
-                    console.warn('Failed to upload queued receipt, inserting without it');
+        // Handle pending receipt upload
+        if (item.pendingReceiptBase64 && item.pendingReceiptFileName) {
+            try {
+                const blob = base64ToBlob(item.pendingReceiptBase64);
+                const file = new File([blob], item.pendingReceiptFileName, { type: blob.type });
+                const url = await StorageService.uploadReceipt(file);
+                if (url) {
+                    insertData.receipt_url = url;
                 }
+            } catch {
+                console.warn('Failed to upload queued receipt, inserting without it');
             }
-
-            // Remove client-side temp id — Supabase will generate one
-            const { _tempId, ...serverData } = insertData;
-
-            const { error } = await supabase.from(table).insert([serverData]);
-            if (error) throw error;
-            break;
         }
 
-        case 'UPDATE': {
-            const { id: recordId, user_id, ...updateFields } = data;
-            const query = supabase.from(table).update(updateFields).eq('id', recordId);
-            if (user_id) query.eq('user_id', user_id);
-            const { error } = await query;
-            if (error) throw error;
-            break;
+        // Remove client-side temp id — Supabase will generate one
+        if ('_tempId' in insertData) {
+            delete insertData._tempId;
         }
 
-        case 'DELETE': {
-            let query = supabase.from(table).delete();
-            // Support both id-based and user_id-based deletes
-            if (data.id) {
-                query = query.eq('id', data.id);
-            }
-            if (data.user_id) {
-                query = query.eq('user_id', data.user_id);
-            }
-            const { error } = await query;
-            // Ignore "not found" errors for deletes — record may already be gone
-            if (error && !error.message.includes('not found')) throw error;
-            break;
+        const { error } = await supabase.from(table).insert([insertData]);
+        if (error) throw error;
+    } else if (action === 'UPDATE') {
+        const updateData = data as any;
+        const { id: recordId, user_id, ...updateFields } = updateData;
+        const query = supabase.from(table).update(updateFields).eq('id', recordId);
+        if (user_id) query.eq('user_id', user_id);
+        const { error } = await query;
+        if (error) throw error;
+    } else if (action === 'DELETE') {
+        const deleteData = data as any;
+        let query = supabase.from(table).delete();
+        if (deleteData.id) {
+            query = query.eq('id', deleteData.id);
         }
+        if (deleteData.user_id) {
+            query = query.eq('user_id', deleteData.user_id);
+        }
+        const { error } = await query;
+        if (error && !error.message.includes('not found')) throw error;
     }
 }
 

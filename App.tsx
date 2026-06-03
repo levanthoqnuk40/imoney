@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Transaction, AIAdvice, Budget, ViewType, Debt, DebtType, GiftRecord, GiftDirection, GiftEventType, Category } from './types';
+import { Transaction, Budget, ViewType, Debt, GiftRecord, GiftEventType, Category } from './types';
 import StatsCard from './components/StatsCard';
 import TransactionForm from './components/TransactionForm';
 import Dashboard from './components/Dashboard';
@@ -14,16 +14,9 @@ import DebtDetail from './components/DebtDetail';
 import GiftCard from './components/GiftCard';
 import GiftForm from './components/GiftForm';
 import GiftDetail from './components/GiftDetail';
-import { getFinancialAdvice } from './services/geminiService';
-import { supabase } from './services/supabase.service';
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
-import { COLORS, GIFT_EVENT_TYPES, autoCategorize, getCategories, saveCategories, DEFAULT_CATEGORIES } from './constants';
-import { User } from '@supabase/supabase-js';
-import * as OfflineDB from './services/offline.service';
-import * as SyncService from './services/sync.service';
-import * as NotificationService from './services/notification.service';
-import { NotificationAlert } from './services/notification.service';
-import { useNetworkStatus } from './hooks/useNetworkStatus';
+import { useAuth } from './hooks/useAuth';
+import { useFinancialData } from './hooks/useFinancialData';
+import { GIFT_EVENT_TYPES, COLORS } from './constants';
 
 // Clean up description metadata and technical codes for mobile
 const formatDescription = (desc: string) => {
@@ -36,14 +29,11 @@ const formatDescription = (desc: string) => {
   // Remove common banking/momo prefixes like "MBVCB.xxxxxx.", "FTxxxxxx", "MOMO-CASHIN."
   clean = clean.replace(/^(MBVCB|MOMO-CASHIN|MOMO|VCB|MB|BIDV|Agribank|Techcombank|ACB|Vietinbank|TPB|VPB)\.?\s*[0-9A-Z]*\.?\s*/i, '');
   
-  // If description becomes empty after cleaning, fallback to original
   if (!clean) {
     clean = desc.trim();
   }
   
-  // Clean transaction references or trace codes
   return clean.split(/\s+/).map(word => {
-    // If it's a long alphanumeric code or trace code (e.g. VCBFT123456 or Momo cashin ID)
     if (word.length > 12 && /^[a-z0-9_\-\.\:\/]+$/i.test(word)) {
       return word.slice(0, 6) + '...';
     }
@@ -52,1117 +42,79 @@ const formatDescription = (desc: string) => {
 };
 
 const App: React.FC = () => {
-  // Auth state
-  const [user, setUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const { user, authLoading, handleLogout } = useAuth();
+  const {
+    transactions,
+    budgets,
+    categories,
+    debts,
+    gifts,
+    isLoading,
+    pendingSyncCount,
+    aiAdvice,
+    isAiLoading,
+    isOnline,
+    isSyncing,
+    syncResult,
+    dismissSyncResult,
+    stats,
+    pieData,
+    barData,
+    debtStats,
+    giftStats,
+    activeAlerts,
+    loadDebts,
+    loadGifts,
+    handleAddTransaction,
+    handleDeleteTransaction,
+    handleUpdateTransaction,
+    handleSaveBudgets,
+    handleAddDebt,
+    handleDeleteDebt,
+    handleAddGift,
+    handleDeleteGift,
+    handleCategoriesChange,
+    handleGetAiAdvice,
+    clearAllData,
+  } = useFinancialData(user);
 
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [budgets, setBudgets] = useState<Budget[]>([]);
-  const [categories, setCategories] = useState<Category[]>(() => getCategories());
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
   const [isCategoryMgmtOpen, setIsCategoryMgmtOpen] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
-  const [aiAdvice, setAiAdvice] = useState<AIAdvice | null>(null);
-  const [isAiLoading, setIsAiLoading] = useState(false);
   const [showTips, setShowTips] = useState(false);
   const [filterMonth, setFilterMonth] = useState<string | null>(null); // 'YYYY-MM' or null
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'INCOME' | 'EXPENSE'>('ALL');
 
   // Debt management state
-  const [debts, setDebts] = useState<Debt[]>([]);
   const [isDebtFormOpen, setIsDebtFormOpen] = useState(false);
   const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
   const [debtFilter, setDebtFilter] = useState<'all' | 'receivable' | 'payable' | 'completed'>('all');
 
   // Gift money tracking state
-  const [gifts, setGifts] = useState<GiftRecord[]>([]);
   const [isGiftFormOpen, setIsGiftFormOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<GiftRecord | null>(null);
   const [giftFilter, setGiftFilter] = useState<'all' | GiftEventType>('all');
-
-  // Pending sync count for UI badge
-  const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   // Notification bell panel state
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
   const notificationPanelRef = React.useRef<HTMLDivElement>(null);
 
-  // Refresh pending count helper
-  const refreshPendingCount = useCallback(async () => {
-    const count = await SyncService.getPendingCount();
-    setPendingSyncCount(count);
-  }, []);
+  // Lazy loading pagination state for transaction list
+  const [visibleCount, setVisibleCount] = useState(20);
 
-  // Sync handler: process queue + reload all data
-  const handleSync = useCallback(async () => {
-    const result = await SyncService.processQueue();
-    // Reload fresh data from Supabase after sync
-    if (user) {
-      await Promise.all([
-        loadTransactionsRef.current?.(),
-        loadDebtsRef.current?.(),
-        loadGiftsRef.current?.(),
-        loadBudgetsRef.current?.(),
-      ]);
-    }
-    await refreshPendingCount();
-    return result;
-  }, [user, refreshPendingCount]);
-
-  // Refs to hold latest load functions (avoids circular deps)
-  const loadTransactionsRef = React.useRef<(() => Promise<void>) | null>(null);
-  const loadDebtsRef = React.useRef<(() => Promise<void>) | null>(null);
-  const loadGiftsRef = React.useRef<(() => Promise<void>) | null>(null);
-  const loadBudgetsRef = React.useRef<(() => Promise<void>) | null>(null);
-  const loadCategoriesRef = React.useRef<(() => Promise<void>) | null>(null);
-
-  // Network status hook
-  const { isOnline, isSyncing, syncResult, dismissSyncResult } = useNetworkStatus({
-    onReconnect: handleSync,
-  });
-
-  // Check auth state on mount — with offline fallback
+  // Reset pagination when search or filters change
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        // Try online auth first
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          setUser(session.user);
-          // Cache session for offline use
-          await OfflineDB.cacheAuthSession(session.user, session);
-          setAuthLoading(false);
-          // Initialize local notifications
-          await NotificationService.initNotifications();
-          return;
-        }
-      } catch {
-        // Network error — try offline cache
-      }
+    setVisibleCount(20);
+  }, [searchTerm, typeFilter, filterMonth]);
 
-      // Fallback: load cached auth when offline
-      if (!navigator.onLine) {
-        const cached = await OfflineDB.getCachedAuth();
-        if (cached) {
-          // Create a minimal User-like object for offline use
-          setUser({
-            id: cached.userId,
-            email: cached.email,
-            user_metadata: { full_name: cached.fullName },
-          } as User);
-          // Initialize local notifications even offline
-          await NotificationService.initNotifications();
-        }
-      }
-      setAuthLoading(false);
-    };
+  const performLogout = useCallback(async () => {
+    await handleLogout(clearAllData);
+  }, [handleLogout, clearAllData]);
 
-    initAuth();
-
-    // Listen for auth changes (online only)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) {
-        setUser(session.user);
-        await OfflineDB.cacheAuthSession(session.user, session);
-      } else {
-        setUser(null);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // Handle logout — clear offline cache too
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    await OfflineDB.clearCachedAuth();
-    setTransactions([]);
-    setDebts([]);
-    setGifts([]);
-    setBudgets([]);
-  };
-
-  // Helper to run auto-categorization on a list of transactions
-  const autoCategorizeTransactions = useCallback(async (rawTxList: Transaction[], updateDb: boolean) => {
-    if (rawTxList.length === 0) return [];
-    
-    const dbUpdates: { id: string; category: string }[] = [];
-
-    const processed = await Promise.all(rawTxList.map(async t => {
-      let category = t.category;
-      if (category === 'Chuyển khoản đi' || category === 'Chuyển khoản nhận' || category === 'Khác') {
-        const autoCat = autoCategorize(t.description, categories);
-        if (autoCat && autoCat.type === t.type) {
-          category = autoCat.category;
-          if (updateDb && !t.id.startsWith('temp_')) {
-            dbUpdates.push({ id: t.id, category });
-            // Update IndexedDB immediately
-            OfflineDB.put('transactions', { ...t, category }).then();
-          }
-        }
-      }
-      return { ...t, category };
-    }));
-
-    if (dbUpdates.length > 0 && navigator.onLine) {
-      // Run Supabase updates sequentially in the background to avoid connection exhaustion/rate limiting
-      (async () => {
-        for (const item of dbUpdates) {
-          try {
-            await supabase.from('transactions').update({ category: item.category }).eq('id', item.id);
-            await new Promise(resolve => setTimeout(resolve, 150)); // 150ms throttle delay
-          } catch (err) {
-            console.error('Error auto-updating category in background DB:', err);
-          }
-        }
-      })();
-    }
-
-    return processed;
-  }, [categories]);
-
-  // Load transactions — online: fetch from Supabase + cache; offline: read IndexedDB
-  const loadTransactions = useCallback(async () => {
-    if (!user) return;
-
-    try {
-      if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('transactions')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('transaction_date', { ascending: false })
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-
-        const mappedTransactions: Transaction[] = (data || []).map(t => ({
-          id: t.id,
-          amount: parseFloat(t.amount),
-          category: t.category || 'Khác',
-          description: t.description || '',
-          date: t.transaction_date,
-          type: t.type === 'income' ? 'INCOME' : 'EXPENSE',
-          receipt_url: t.receipt_url || undefined
-        }));
-
-        const processed = await autoCategorizeTransactions(mappedTransactions, true);
-        setTransactions(processed);
-        // Cache to IndexedDB
-        await OfflineDB.clearStore('transactions');
-        await OfflineDB.putAll('transactions', processed);
-      } else {
-        // Offline: load from IndexedDB
-        const cached = await OfflineDB.getAll<Transaction>('transactions');
-        // Sort by date descending (same as Supabase order)
-        cached.sort((a, b) => b.date.localeCompare(a.date));
-        const processed = await autoCategorizeTransactions(cached, false);
-        setTransactions(processed);
-      }
-    } catch (error) {
-      console.error('Error loading transactions:', error);
-      // Fallback to IndexedDB on network error
-      const cached = await OfflineDB.getAll<Transaction>('transactions');
-      cached.sort((a, b) => b.date.localeCompare(a.date));
-      const processed = await autoCategorizeTransactions(cached, false);
-      setTransactions(processed);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user, autoCategorizeTransactions]);
-
-  // Load categories from Supabase (or fallback to IndexedDB / localStorage)
-  const loadCategories = useCallback(async () => {
-    if (!user) return;
-
-    try {
-      if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('categories')
-          .select('*')
-          .eq('user_id', user.id);
-
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-          const fetchedCategories: Category[] = data.map(c => ({
-            id: c.id,
-            name: c.name,
-            icon: c.icon,
-            type: c.type as 'INCOME' | 'EXPENSE',
-            keywords: c.keywords || []
-          }));
-          setCategories(fetchedCategories);
-          saveCategories(fetchedCategories);
-          await OfflineDB.clearStore('categories');
-          await OfflineDB.putAll('categories', fetchedCategories);
-          return;
-        } else {
-          // If no categories in Supabase (new user), upload default categories
-          const { error: insertError } = await supabase
-            .from('categories')
-            .insert(
-              DEFAULT_CATEGORIES.map(c => ({
-                id: c.id,
-                user_id: user.id,
-                name: c.name,
-                icon: c.icon,
-                type: c.type,
-                keywords: c.keywords
-              }))
-            );
-          if (insertError) {
-            console.error('Failed to upload default categories:', insertError);
-          }
-          // Use default categories in state
-          setCategories(DEFAULT_CATEGORIES);
-          saveCategories(DEFAULT_CATEGORIES);
-          await OfflineDB.clearStore('categories');
-          await OfflineDB.putAll('categories', DEFAULT_CATEGORIES);
-          return;
-        }
-      }
-
-      // Offline: load from IndexedDB
-      const cached = await OfflineDB.getAll<Category>('categories');
-      if (cached && cached.length > 0) {
-        setCategories(cached);
-        saveCategories(cached);
-      } else {
-        // Fallback to default
-        setCategories(DEFAULT_CATEGORIES);
-        saveCategories(DEFAULT_CATEGORIES);
-      }
-    } catch (error) {
-      console.error('Error loading categories:', error);
-      // Fallback to IndexedDB / localStorage on error
-      const cached = await OfflineDB.getAll<Category>('categories');
-      if (cached && cached.length > 0) {
-        setCategories(cached);
-        saveCategories(cached);
-      } else {
-        const localSaved = getCategories();
-        setCategories(localSaved);
-      }
-    }
-  }, [user]);
-
-  // Keep ref in sync
-  loadCategoriesRef.current = loadCategories;
-
-  // Handle categories changes (add/edit/delete) with cascade updates for renames
-  const handleCategoriesChange = useCallback(async (newCategories: Category[], renameMap?: { oldName: string; newName: string }) => {
-    // Save new categories
-    setCategories(newCategories);
-    saveCategories(newCategories);
-
-    // Sync category changes to Supabase & IndexedDB
-    if (user) {
-      // 1. Detect inserts, updates, and deletes
-      const addedOrUpdated = newCategories.filter(nc => {
-        const old = categories.find(oc => oc.id === nc.id);
-        return !old || old.name !== nc.name || old.icon !== nc.icon || JSON.stringify(old.keywords) !== JSON.stringify(nc.keywords);
-      });
-
-      const deleted = categories.filter(oc => !newCategories.some(nc => nc.id === oc.id));
-
-      // Process added or updated items
-      for (const item of addedOrUpdated) {
-        const isNew = !categories.some(oc => oc.id === item.id);
-        const action = isNew ? 'INSERT' : 'UPDATE';
-
-        // Update IndexedDB immediately
-        await OfflineDB.put('categories', item);
-
-        const payload = {
-          id: item.id,
-          user_id: user.id,
-          name: item.name,
-          icon: item.icon,
-          type: item.type,
-          keywords: item.keywords
-        };
-
-        if (navigator.onLine) {
-          try {
-            if (isNew) {
-              const { error } = await supabase.from('categories').insert([payload]);
-              if (error) throw error;
-            } else {
-              const { error } = await supabase
-                .from('categories')
-                .update({ name: item.name, icon: item.icon, type: item.type, keywords: item.keywords })
-                .eq('id', item.id)
-                .eq('user_id', user.id);
-              if (error) throw error;
-            }
-          } catch (err) {
-            console.error(`Failed to online sync category ${action}, queuing:`, err);
-            await SyncService.addToQueue({
-              table: 'categories',
-              action,
-              data: payload
-            });
-            await refreshPendingCount();
-          }
-        } else {
-          // Offline: queue update
-          await SyncService.addToQueue({
-            table: 'categories',
-            action,
-            data: payload
-          });
-          await refreshPendingCount();
-        }
-      }
-
-      // Process deleted items
-      for (const item of deleted) {
-        // Delete from IndexedDB
-        await OfflineDB.deleteById('categories', item.id);
-
-        if (navigator.onLine) {
-          try {
-            const { error } = await supabase
-              .from('categories')
-              .delete()
-              .eq('id', item.id)
-              .eq('user_id', user.id);
-            if (error) throw error;
-          } catch (err) {
-            console.error('Failed to online delete category, queuing:', err);
-            await SyncService.addToQueue({
-              table: 'categories',
-              action: 'DELETE',
-              data: { id: item.id, user_id: user.id }
-            });
-            await refreshPendingCount();
-          }
-        } else {
-          // Offline: queue delete
-          await SyncService.addToQueue({
-            table: 'categories',
-            action: 'DELETE',
-            data: { id: item.id, user_id: user.id }
-          });
-          await refreshPendingCount();
-        }
-      }
-    }
-
-    // If a category was renamed, update all associated transactions and budgets
-    if (renameMap && user) {
-      const { oldName, newName } = renameMap;
-
-      // 1. Cascade update transactions local state
-      setTransactions(prev => prev.map(t => 
-        t.category === oldName ? { ...t, category: newName } : t
-      ));
-
-      // Cascade update transactions in local IndexedDB cache
-      try {
-        const cachedTxs = await OfflineDB.getAll<Transaction>('transactions');
-        const updatedCachedTxs = cachedTxs.map(t => 
-          t.category === oldName ? { ...t, category: newName } : t
-        );
-        await OfflineDB.clearStore('transactions');
-        await OfflineDB.putAll('transactions', updatedCachedTxs);
-
-        // Cascade update in Supabase / queue if offline
-        if (navigator.onLine) {
-          const { error } = await supabase
-            .from('transactions')
-            .update({ category: newName })
-            .eq('category', oldName)
-            .eq('user_id', user.id);
-          if (error) throw error;
-        } else {
-          // Offline: queue updates for affected transactions
-          const affected = cachedTxs.filter(t => t.category === oldName);
-          for (const tx of affected) {
-            await SyncService.addToQueue({
-              table: 'transactions',
-              action: 'UPDATE',
-              data: { id: tx.id, user_id: user.id, category: newName }
-            });
-          }
-          await refreshPendingCount();
-        }
-      } catch (err) {
-        console.error('Failed to cascade update transaction categories:', err);
-      }
-
-      // 2. Cascade update budgets local state
-      setBudgets(prev => prev.map(b => 
-        b.category === oldName ? { ...b, category: newName } : b
-      ));
-
-      // Cascade update budgets in local IndexedDB cache
-      try {
-        const cachedBudgets = await OfflineDB.getAll<Budget>('budgets');
-        const updatedCachedBudgets = cachedBudgets.map(b => 
-          b.category === oldName ? { ...b, category: newName } : b
-        );
-        await OfflineDB.clearStore('budgets');
-        await OfflineDB.putAll('budgets', updatedCachedBudgets);
-
-        // Cascade update budgets in Supabase / queue if offline
-        if (navigator.onLine) {
-          const { error } = await supabase
-            .from('budgets')
-            .update({ category: newName })
-            .eq('category', oldName)
-            .eq('user_id', user.id);
-          if (error) throw error;
-        } else {
-          // Offline: queue updates for affected budgets
-          const affected = cachedBudgets.filter(b => b.category === oldName);
-          for (const b of affected) {
-            await SyncService.addToQueue({
-              table: 'budgets',
-              action: 'UPDATE',
-              data: { id: b.id, user_id: user.id, category: newName }
-            });
-          }
-          await refreshPendingCount();
-        }
-      } catch (err) {
-        console.error('Failed to cascade update budget categories:', err);
-      }
-    }
-  }, [user, categories, refreshPendingCount]);
-
-  // Keep ref in sync for the sync handler
-  loadTransactionsRef.current = loadTransactions;
-
-  // Load budgets — online: Supabase + cache; offline: IndexedDB
-  const loadBudgets = useCallback(async () => {
-    if (!user) return;
-
-    try {
-      if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('budgets')
-          .select('*')
-          .eq('user_id', user.id);
-
-        if (error) throw error;
-
-        const mapped: Budget[] = (data || []).map(b => ({
-          id: b.id,
-          category: b.category,
-          limit: parseFloat(b.budget_limit),
-          period: b.period || 'monthly',
-        }));
-
-        setBudgets(mapped);
-        await OfflineDB.clearStore('budgets');
-        await OfflineDB.putAll('budgets', mapped);
-      } else {
-        const cached = await OfflineDB.getAll<Budget>('budgets');
-        setBudgets(cached);
-      }
-    } catch (error) {
-      console.error('Error loading budgets:', error);
-      const cached = await OfflineDB.getAll<Budget>('budgets');
-      setBudgets(cached);
-    }
-  }, [user]);
-
-  // Keep ref in sync
-  loadBudgetsRef.current = loadBudgets;
-
-  // Load debts — online: Supabase + cache; offline: IndexedDB
-  const loadDebts = useCallback(async () => {
-    if (!user) return;
-
-    try {
-      if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('debts')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-
-        const mappedDebts: Debt[] = (data || []).map(d => ({
-          id: d.id,
-          user_id: d.user_id,
-          type: d.type as 'receivable' | 'payable',
-          person_name: d.person_name,
-          original_amount: parseFloat(d.original_amount),
-          paid_amount: parseFloat(d.paid_amount || 0),
-          remaining_amount: parseFloat(d.original_amount) - parseFloat(d.paid_amount || 0),
-          created_date: d.created_date,
-          due_date: d.due_date || undefined,
-          description: d.description || undefined,
-          status: d.status as 'pending' | 'partial' | 'completed'
-        }));
-
-        setDebts(mappedDebts);
-        await OfflineDB.clearStore('debts');
-        await OfflineDB.putAll('debts', mappedDebts);
-      } else {
-        const cached = await OfflineDB.getAll<Debt>('debts');
-        setDebts(cached);
-      }
-    } catch (error) {
-      console.error('Error loading debts:', error);
-      const cached = await OfflineDB.getAll<Debt>('debts');
-      setDebts(cached);
-    }
-  }, [user]);
-
-  // Keep ref in sync
-  loadDebtsRef.current = loadDebts;
-
-  // Load gifts — online: Supabase + cache; offline: IndexedDB
-  const loadGifts = useCallback(async () => {
-    if (!user) return;
-
-    try {
-      if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('gift_records')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('event_date', { ascending: false });
-
-        if (error) throw error;
-
-        const mappedGifts: GiftRecord[] = (data || []).map(g => ({
-          id: g.id,
-          user_id: g.user_id,
-          direction: g.direction as GiftDirection,
-          person_name: g.person_name,
-          event_type: g.event_type as GiftEventType,
-          amount: parseFloat(g.amount),
-          event_date: g.event_date,
-          note: g.note || undefined
-        }));
-
-        setGifts(mappedGifts);
-        await OfflineDB.clearStore('gift_records');
-        await OfflineDB.putAll('gift_records', mappedGifts);
-      } else {
-        const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
-        setGifts(cached);
-      }
-    } catch (error) {
-      console.error('Error loading gifts:', error);
-      const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
-      setGifts(cached);
-    }
-  }, [user]);
-
-  // Keep ref in sync
-  loadGiftsRef.current = loadGifts;
-
-  // Load all data with local-first cache (SWR) when user is authenticated
-  useEffect(() => {
-    if (user) {
-      const initData = async () => {
-        try {
-          // 1. Instantly load from IndexedDB (local-first)
-          const [cachedCats, cachedTxs, cachedBudgets, cachedDebts, cachedGifts] = await Promise.all([
-            OfflineDB.getAll<Category>('categories'),
-            OfflineDB.getAll<Transaction>('transactions'),
-            OfflineDB.getAll<Budget>('budgets'),
-            OfflineDB.getAll<Debt>('debts'),
-            OfflineDB.getAll<GiftRecord>('gift_records'),
-          ]);
-
-          if (cachedCats && cachedCats.length > 0) setCategories(cachedCats);
-          if (cachedTxs && cachedTxs.length > 0) {
-            cachedTxs.sort((a, b) => b.date.localeCompare(a.date));
-            setTransactions(cachedTxs);
-          }
-          if (cachedBudgets && cachedBudgets.length > 0) setBudgets(cachedBudgets);
-          if (cachedDebts && cachedDebts.length > 0) setDebts(cachedDebts);
-          if (cachedGifts && cachedGifts.length > 0) setGifts(cachedGifts);
-
-          // Render UI instantly!
-          setIsLoading(false);
-
-          // 2. Fetch fresh data from Supabase in the background (parallel)
-          if (navigator.onLine) {
-            Promise.all([
-              loadCategoriesRef.current ? loadCategoriesRef.current() : Promise.resolve(),
-              loadTransactionsRef.current ? loadTransactionsRef.current() : Promise.resolve(),
-              loadBudgetsRef.current ? loadBudgetsRef.current() : Promise.resolve(),
-              loadDebtsRef.current ? loadDebtsRef.current() : Promise.resolve(),
-              loadGiftsRef.current ? loadGiftsRef.current() : Promise.resolve(),
-            ]).catch(err => console.error('Failed to reload fresh data in background:', err));
-          }
-        } catch (err) {
-          console.error('Error during local-first data load:', err);
-          setIsLoading(false);
-        }
-      };
-
-      initData();
-      refreshPendingCount();
-    } else {
-      // Clean up state on logout
-      setCategories(DEFAULT_CATEGORIES);
-      setTransactions([]);
-      setBudgets([]);
-      setDebts([]);
-      setGifts([]);
-      setIsLoading(false);
-    }
-  }, [user, refreshPendingCount]);
-
-  // Reschedule all notifications when data changes
-  useEffect(() => {
-    if (!user || isLoading) return;
-    NotificationService.rescheduleAll(debts, budgets, transactions);
-  }, [user, debts, budgets, transactions, isLoading]);
-
-  // Realtime subscription: auto-update when Sepay webhook creates new transactions
-  useEffect(() => {
-    if (!user) return;
-
-    const channel = supabase
-      .channel('transactions-realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'transactions',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const t = payload.new;
-          // Only auto-add if it came from Sepay (avoid duplicating manual adds)
-          if (t.source === 'sepay') {
-            const newTx: Transaction = {
-              id: t.id,
-              amount: parseFloat(t.amount),
-              category: t.category || 'Khác',
-              description: t.description || '',
-              date: t.transaction_date,
-              type: t.type === 'income' ? 'INCOME' : 'EXPENSE',
-              receipt_url: t.receipt_url || undefined,
-            };
-            
-            // Run auto categorization on the new transaction
-            let category = newTx.category;
-            if (category === 'Chuyển khoản đi' || category === 'Chuyển khoản nhận' || category === 'Khác') {
-              const autoCat = autoCategorize(newTx.description, categories);
-              if (autoCat && autoCat.type === newTx.type) {
-                category = autoCat.category;
-                // Update Supabase and IndexedDB in background
-                supabase.from('transactions').update({ category }).eq('id', newTx.id).then(({ error }) => {
-                  if (error) console.error('Error auto-updating realtime category in DB:', error);
-                });
-                OfflineDB.put('transactions', { ...newTx, category }).then();
-              }
-            }
-            
-            setTransactions((prev) => [{ ...newTx, category }, ...prev]);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, categories]);
-
-  // Clean up old localStorage data (migrated to Supabase/IndexedDB)
-  useEffect(() => {
-    localStorage.removeItem('finvise_transactions');
-    localStorage.removeItem('finvise_budgets');
-  }, []);
-
-  const stats = useMemo(() => {
-    const income = transactions.filter(t => t.type === 'INCOME').reduce((acc, curr) => acc + curr.amount, 0);
-    const expense = transactions.filter(t => t.type === 'EXPENSE').reduce((acc, curr) => acc + curr.amount, 0);
-    return {
-      totalIncome: income,
-      totalExpense: expense,
-      balance: income - expense
-    };
-  }, [transactions]);
-
-  const pieData = useMemo(() => {
-    const categories: Record<string, number> = {};
-    transactions
-      .filter(t => t.type === 'EXPENSE')
-      .forEach(t => {
-        categories[t.category] = (categories[t.category] || 0) + t.amount;
-      });
-    return Object.entries(categories).map(([name, value]) => ({ name, value }));
-  }, [transactions]);
-
-  const barData = useMemo(() => {
-    const dates: Record<string, { income: number; expense: number }> = {};
-    transactions.slice(-10).forEach(t => {
-      const date = t.date;
-      if (!dates[date]) dates[date] = { income: 0, expense: 0 };
-      if (t.type === 'INCOME') dates[date].income += t.amount;
-      else dates[date].expense += t.amount;
-    });
-    return Object.entries(dates).map(([date, values]) => ({ date, ...values }));
-  }, [transactions]);
-
-  const handleAddTransaction = async (newTx: Omit<Transaction, 'id'>) => {
-    if (!user) {
-      alert('Vui lòng đăng nhập để thêm giao dịch');
-      return;
-    }
-
-    // Generate a temporary local ID
-    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-
-    const tx: Transaction = {
-      id: tempId,
-      amount: newTx.amount,
-      category: newTx.category,
-      description: newTx.description,
-      date: newTx.date,
-      type: newTx.type,
-      receipt_url: newTx.receipt_url || undefined,
-    };
-
-    // Optimistic update: show immediately in UI + save to IndexedDB
-    setTransactions(prev => [tx, ...prev]);
-    await OfflineDB.put('transactions', tx);
-
-    const supabasePayload = {
-      _tempId: tempId,
-      user_id: user.id,
-      type: newTx.type === 'INCOME' ? 'income' : 'expense',
-      amount: newTx.amount,
-      category: newTx.category,
-      description: newTx.description,
-      transaction_date: newTx.date,
-      currency: 'VND',
-      receipt_url: newTx.receipt_url || null,
-    };
-
-    if (navigator.onLine) {
-      try {
-        const { _tempId, ...serverData } = supabasePayload;
-        const { data, error } = await supabase
-          .from('transactions')
-          .insert([serverData])
-          .select()
-          .single();
-
-        if (error) throw error;
-
-        // Replace temp item with real server data
-        const serverTx: Transaction = {
-          id: data.id,
-          amount: parseFloat(data.amount),
-          category: data.category || 'Khác',
-          description: data.description || '',
-          date: data.transaction_date,
-          type: newTx.type,
-          receipt_url: data.receipt_url || undefined,
-        };
-        setTransactions(prev => prev.map(t => t.id === tempId ? serverTx : t));
-        await OfflineDB.deleteById('transactions', tempId);
-        await OfflineDB.put('transactions', serverTx);
-      } catch (error) {
-        console.error('Online insert failed, queuing for sync:', error);
-        await SyncService.addToQueue({ table: 'transactions', action: 'INSERT', data: supabasePayload });
-        await refreshPendingCount();
-      }
-    } else {
-      // Offline: queue for later sync
-      await SyncService.addToQueue({ table: 'transactions', action: 'INSERT', data: supabasePayload });
-      await refreshPendingCount();
-    }
-  };
-
-  const handleDeleteTransaction = async (id: string) => {
-    if (!user) return;
-
-    // Optimistic: remove from UI + IndexedDB immediately
-    setTransactions(prev => prev.filter(t => t.id !== id));
-    await OfflineDB.deleteById('transactions', id);
-
-    if (navigator.onLine && !id.startsWith('temp_')) {
-      try {
-        const { error } = await supabase
-          .from('transactions')
-          .delete()
-          .eq('id', id)
-          .eq('user_id', user.id);
-        if (error) throw error;
-      } catch (error) {
-        console.error('Online delete failed, queuing:', error);
-        await SyncService.addToQueue({ table: 'transactions', action: 'DELETE', data: { id, user_id: user.id } });
-        await refreshPendingCount();
-      }
-    } else if (!id.startsWith('temp_')) {
-      await SyncService.addToQueue({ table: 'transactions', action: 'DELETE', data: { id, user_id: user.id } });
-      await refreshPendingCount();
-    }
-  };
-
-  // Update transaction description and/or category
-  const handleUpdateTransaction = async (id: string, description: string, category?: string) => {
-    if (!user) return;
-
-    let targetCategory = category;
-    const currentTx = transactions.find(t => t.id === id);
-    
-    // Auto-categorize if no manual category is provided and the description changed
-    if (!targetCategory && currentTx) {
-      const isDefaultCat = currentTx.category === 'Chuyển khoản đi' || currentTx.category === 'Chuyển khoản nhận' || currentTx.category === 'Khác';
-      if (isDefaultCat) {
-        const autoCat = autoCategorize(description);
-        if (autoCat && autoCat.type === currentTx.type) {
-          targetCategory = autoCat.category;
-        }
-      }
-    }
-
-    // Fallback to existing category if still not set
-    if (!targetCategory && currentTx) {
-      targetCategory = currentTx.category;
-    }
-
-    const finalCategory = targetCategory || 'Khác';
-
-    // Optimistic update UI + IndexedDB
-    setTransactions(prev => prev.map(t =>
-      t.id === id ? { ...t, description, category: finalCategory } : t
-    ));
-    if (selectedTransaction?.id === id) {
-      setSelectedTransaction({ ...selectedTransaction, description, category: finalCategory });
-    }
-
-    const existing = await OfflineDB.getById<Transaction>('transactions', id);
-    if (existing) {
-      await OfflineDB.put('transactions', { ...existing, description, category: finalCategory });
-    }
-
-    const updatePayload: Record<string, any> = { description, category: finalCategory };
-
-    if (navigator.onLine && !id.startsWith('temp_')) {
-      try {
-        const { error } = await supabase
-          .from('transactions')
-          .update(updatePayload)
-          .eq('id', id)
-          .eq('user_id', user.id);
-        if (error) throw error;
-      } catch (error) {
-        console.error('Online update failed, queuing:', error);
-        await SyncService.addToQueue({ table: 'transactions', action: 'UPDATE', data: { id, user_id: user.id, ...updatePayload } });
-        await refreshPendingCount();
-      }
-    } else if (!id.startsWith('temp_')) {
-      await SyncService.addToQueue({ table: 'transactions', action: 'UPDATE', data: { id, user_id: user.id, ...updatePayload } });
-      await refreshPendingCount();
-    }
-  };
-
-  const handleGetAiAdvice = async () => {
-    if (transactions.length === 0) return;
-    setIsAiLoading(true);
-    const advice = await getFinancialAdvice(transactions);
-    setAiAdvice(advice);
-    setIsAiLoading(false);
-  };
-
-  // ============================================
-  // BUDGET MANAGEMENT FUNCTIONS
-  // ============================================
-
-
-
-
-
-  const handleSaveBudgets = async (newBudgets: Budget[]) => {
-    if (!user) return;
-
-    // Optimistic update + cache
-    setBudgets(newBudgets);
-    await OfflineDB.clearStore('budgets');
-    await OfflineDB.putAll('budgets', newBudgets);
-
-    if (navigator.onLine) {
-      try {
-        // Delete all existing budgets for this user, then insert new ones
-        const { error: deleteError } = await supabase
-          .from('budgets')
-          .delete()
-          .eq('user_id', user.id);
-        if (deleteError) throw deleteError;
-
-        if (newBudgets.length > 0) {
-          const { error: insertError } = await supabase
-            .from('budgets')
-            .insert(newBudgets.map(b => ({
-              user_id: user.id,
-              category: b.category,
-              budget_limit: b.limit,
-              period: b.period,
-            })));
-          if (insertError) throw insertError;
-        }
-
-        // Reload to get server IDs
-        await loadBudgets();
-      } catch (error) {
-        console.error('Online budget save failed, queuing:', error);
-        alert('Lỗi lưu ngân sách trực tiếp, sẽ đồng bộ khi có mạng ổn định.');
-        // Queue a DELETE + INSERT batch
-        await SyncService.addToQueue({
-          table: 'budgets',
-          action: 'DELETE',
-          data: { user_id: user.id },
-        });
-        for (const b of newBudgets) {
-          await SyncService.addToQueue({
-            table: 'budgets',
-            action: 'INSERT',
-            data: {
-              _tempId: b.id,
-              user_id: user.id,
-              category: b.category,
-              budget_limit: b.limit,
-              period: b.period,
-            },
-          });
-        }
-        await refreshPendingCount();
-      }
-    } else {
-      // Offline: queue for sync
-      await SyncService.addToQueue({
-        table: 'budgets',
-        action: 'DELETE',
-        data: { user_id: user.id },
-      });
-      for (const b of newBudgets) {
-        await SyncService.addToQueue({
-          table: 'budgets',
-          action: 'INSERT',
-          data: {
-            _tempId: b.id,
-            user_id: user.id,
-            category: b.category,
-            budget_limit: b.limit,
-            period: b.period,
-          },
-        });
-      }
-      await refreshPendingCount();
-    }
-  };
-
-  // ============================================
-  // DEBT MANAGEMENT FUNCTIONS
-  // ============================================
-
-
-
-
-
-  // Add new debt
-  const handleAddDebt = async (newDebt: {
-    type: DebtType;
-    person_name: string;
-    original_amount: number;
-    created_date: string;
-    due_date?: string;
-    description?: string;
-  }) => {
-    if (!user) {
-      alert('Vui lòng đăng nhập để thêm khoản nợ');
-      return;
-    }
-
-    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    const localDebt: Debt = {
-      id: tempId,
-      user_id: user.id,
-      type: newDebt.type,
-      person_name: newDebt.person_name,
-      original_amount: newDebt.original_amount,
-      paid_amount: 0,
-      remaining_amount: newDebt.original_amount,
-      created_date: newDebt.created_date,
-      due_date: newDebt.due_date,
-      description: newDebt.description,
-      status: 'pending',
-    };
-
-    // Optimistic update
-    setDebts(prev => [localDebt, ...prev]);
-    await OfflineDB.put('debts', localDebt);
-    setIsDebtFormOpen(false);
-
-    const supabasePayload = {
-      _tempId: tempId,
-      user_id: user.id,
-      type: newDebt.type,
-      person_name: newDebt.person_name,
-      original_amount: newDebt.original_amount,
-      created_date: newDebt.created_date,
-      due_date: newDebt.due_date || null,
-      description: newDebt.description || null,
-      status: 'pending',
-    };
-
-    if (navigator.onLine) {
-      try {
-        const { _tempId, ...serverData } = supabasePayload;
-        const { error } = await supabase.from('debts').insert([serverData]);
-        if (error) throw error;
-        await loadDebts(); // Reload to get server-generated IDs
-      } catch (error) {
-        console.error('Online insert failed, queuing:', error);
-        await SyncService.addToQueue({ table: 'debts', action: 'INSERT', data: supabasePayload });
-        await refreshPendingCount();
-      }
-    } else {
-      await SyncService.addToQueue({ table: 'debts', action: 'INSERT', data: supabasePayload });
-      await refreshPendingCount();
-    }
-  };
-
-  // Delete debt
-  const handleDeleteDebt = async (id: string) => {
-    if (!user) return;
-
-    setDebts(prev => prev.filter(d => d.id !== id));
-    await OfflineDB.deleteById('debts', id);
-
-    if (navigator.onLine && !id.startsWith('temp_')) {
-      try {
-        const { error } = await supabase
-          .from('debts')
-          .delete()
-          .eq('id', id)
-          .eq('user_id', user.id);
-        if (error) throw error;
-      } catch (error) {
-        console.error('Online delete failed, queuing:', error);
-        await SyncService.addToQueue({ table: 'debts', action: 'DELETE', data: { id, user_id: user.id } });
-        await refreshPendingCount();
-      }
-    } else if (!id.startsWith('temp_')) {
-      await SyncService.addToQueue({ table: 'debts', action: 'DELETE', data: { id, user_id: user.id } });
-      await refreshPendingCount();
-    }
-  };
-
-  // Filter debts
+  // Filter debts based on state
   const filteredDebts = useMemo(() => {
     if (debtFilter === 'completed') {
       return debts.filter(d => d.status === 'completed');
@@ -1172,131 +124,11 @@ const App: React.FC = () => {
     return activeDebts.filter(d => d.type === debtFilter);
   }, [debts, debtFilter]);
 
-  // Debt summary stats
-  const debtStats = useMemo(() => {
-    const receivable = debts
-      .filter(d => d.type === 'receivable')
-      .reduce((sum, d) => sum + d.remaining_amount, 0);
-    const payable = debts
-      .filter(d => d.type === 'payable')
-      .reduce((sum, d) => sum + d.remaining_amount, 0);
-    return { receivable, payable, net: receivable - payable };
-  }, [debts]);
-
-  // ============================================
-  // GIFT MONEY TRACKING FUNCTIONS
-  // ============================================
-
-
-
-
-
-  // Add new gift
-  const handleAddGift = async (newGift: {
-    direction: GiftDirection;
-    person_name: string;
-    event_type: GiftEventType;
-    amount: number;
-    event_date: string;
-    note?: string;
-  }) => {
-    if (!user) {
-      alert('Vui lòng đăng nhập');
-      return;
-    }
-
-    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    const localGift: GiftRecord = {
-      id: tempId,
-      user_id: user.id,
-      direction: newGift.direction,
-      person_name: newGift.person_name,
-      event_type: newGift.event_type,
-      amount: newGift.amount,
-      event_date: newGift.event_date,
-      note: newGift.note,
-    };
-
-    setGifts(prev => [localGift, ...prev]);
-    await OfflineDB.put('gift_records', localGift);
-    setIsGiftFormOpen(false);
-
-    const supabasePayload = {
-      _tempId: tempId,
-      user_id: user.id,
-      direction: newGift.direction,
-      person_name: newGift.person_name,
-      event_type: newGift.event_type,
-      amount: newGift.amount,
-      event_date: newGift.event_date,
-      note: newGift.note || null,
-    };
-
-    if (navigator.onLine) {
-      try {
-        const { _tempId, ...serverData } = supabasePayload;
-        const { error } = await supabase.from('gift_records').insert([serverData]);
-        if (error) throw error;
-        await loadGifts();
-      } catch (error) {
-        console.error('Online insert failed, queuing:', error);
-        await SyncService.addToQueue({ table: 'gift_records', action: 'INSERT', data: supabasePayload });
-        await refreshPendingCount();
-      }
-    } else {
-      await SyncService.addToQueue({ table: 'gift_records', action: 'INSERT', data: supabasePayload });
-      await refreshPendingCount();
-    }
-  };
-
-  // Delete gift
-  const handleDeleteGift = async (id: string) => {
-    if (!user) return;
-
-    setGifts(prev => prev.filter(g => g.id !== id));
-    await OfflineDB.deleteById('gift_records', id);
-
-    if (navigator.onLine && !id.startsWith('temp_')) {
-      try {
-        const { error } = await supabase
-          .from('gift_records')
-          .delete()
-          .eq('id', id)
-          .eq('user_id', user.id);
-        if (error) throw error;
-      } catch (error) {
-        console.error('Online delete failed, queuing:', error);
-        await SyncService.addToQueue({ table: 'gift_records', action: 'DELETE', data: { id, user_id: user.id } });
-        await refreshPendingCount();
-      }
-    } else if (!id.startsWith('temp_')) {
-      await SyncService.addToQueue({ table: 'gift_records', action: 'DELETE', data: { id, user_id: user.id } });
-      await refreshPendingCount();
-    }
-  };
-
-  // Filter gifts
+  // Filter gifts based on state
   const filteredGifts = useMemo(() => {
     if (giftFilter === 'all') return gifts;
     return gifts.filter(g => g.event_type === giftFilter);
   }, [gifts, giftFilter]);
-
-  // Gift summary stats
-  const giftStats = useMemo(() => {
-    const given = gifts
-      .filter(g => g.direction === 'given')
-      .reduce((sum, g) => sum + g.amount, 0);
-    const received = gifts
-      .filter(g => g.direction === 'received')
-      .reduce((sum, g) => sum + g.amount, 0);
-    return { given, received, net: received - given };
-  }, [gifts]);
-
-  // Compute active notification alerts for bell icon
-  const activeAlerts = useMemo<NotificationAlert[]>(() => {
-    if (!user) return [];
-    return NotificationService.getActiveAlerts(debts, budgets, transactions);
-  }, [user, debts, budgets, transactions]);
 
   // Close notification panel on click outside
   useEffect(() => {
@@ -1326,6 +158,9 @@ const App: React.FC = () => {
   }
 
   // Show login screen if not authenticated
+  if (!user) {
+    return <LoginScreen onLoginSuccess={() => {}} isOnline={isOnline} />;
+  }ated
   if (!user) {
     return <LoginScreen onLoginSuccess={() => loadTransactions()} isOnline={isOnline} />;
   }
@@ -1791,78 +626,95 @@ const App: React.FC = () => {
                         }
                         return true;
                       });
+                                            const visibleTx = displayTx.slice(0, visibleCount);
+                      const hasMore = displayTx.length > visibleCount;
+                      const remainingCount = displayTx.length - visibleCount;
+
                       return displayTx.length > 0 ? (
-                        (() => {
-                          const grouped: Record<string, typeof transactions> = {};
-                          displayTx.forEach(tx => {
-                            if (!grouped[tx.date]) grouped[tx.date] = [];
-                            grouped[tx.date].push(tx);
-                          });
-                          return Object.entries(grouped).map(([date, txs]) => {
-                            const d = new Date(date);
-                            const formatted = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
-                            return (
-                              <div key={date}>
-                                <div className="px-4 py-2.5 bg-slate-50 border-y border-slate-100 flex justify-between items-center mt-4 first:mt-0">
-                                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                                    <span className="text-sm">📅</span> {formatted}
-                                  </span>
-                                  <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-full">
-                                    {txs.length} giao dịch
-                                  </span>
-                                </div>
-                                <div className="divide-y divide-gray-50">
-                                  {txs.map(tx => {
-                                    const cat = categories.find(c => c.name === tx.category);
-                                    const emoji = cat?.icon || (tx.type === 'INCOME' ? '💵' : '💸');
-                                    return (
-                                      <div
-                                        key={tx.id}
-                                        className="transaction-item group cursor-pointer hover:bg-gray-50"
-                                        onClick={() => setSelectedTransaction(tx)}
-                                      >
-                                        <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
-                                          <div className={`w-10 h-10 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg ${
-                                            tx.type === 'INCOME' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
-                                          }`}>
-                                            {emoji}
-                                          </div>
-                                          <div className="min-w-0 flex-1">
-                                            <p className="font-semibold text-gray-800 text-sm sm:text-base truncate">{tx.category}</p>
-                                            <p className="text-xs text-gray-400 line-clamp-2 break-words leading-relaxed mt-0.5">{formatDescription(tx.description)}</p>
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 ml-3">
-                                          <div className="flex flex-col items-end">
-                                            <p className={`font-bold text-right text-sm sm:text-base whitespace-nowrap ${
-                                              tx.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'
-                                            }`}>
-                                              {tx.type === 'INCOME' ? '+' : '-'}{tx.amount.toLocaleString('vi-VN')}đ
-                                            </p>
-                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md mt-0.5 ${
+                        <>
+                          {(() => {
+                            const grouped: Record<string, typeof transactions> = {};
+                            visibleTx.forEach(tx => {
+                              if (!grouped[tx.date]) grouped[tx.date] = [];
+                              grouped[tx.date].push(tx);
+                            });
+                            return Object.entries(grouped).map(([date, txs]) => {
+                              const d = new Date(date);
+                              const formatted = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+                              return (
+                                <div key={date}>
+                                  <div className="px-4 py-2.5 bg-slate-50 border-y border-slate-100 flex justify-between items-center mt-4 first:mt-0">
+                                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                                      <span className="text-sm">📅</span> {formatted}
+                                    </span>
+                                    <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-full">
+                                      {txs.length} giao dịch
+                                    </span>
+                                  </div>
+                                  <div className="divide-y divide-gray-50">
+                                    {txs.map(tx => {
+                                      const cat = categories.find(c => c.name === tx.category);
+                                      const emoji = cat?.icon || (tx.type === 'INCOME' ? '💵' : '💸');
+                                      return (
+                                        <div
+                                          key={tx.id}
+                                          className="transaction-item group cursor-pointer hover:bg-gray-50"
+                                          onClick={() => setSelectedTransaction(tx)}
+                                        >
+                                          <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
+                                            <div className={`w-10 h-10 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg ${
                                               tx.type === 'INCOME' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
                                             }`}>
-                                              {tx.type === 'INCOME' ? 'THU' : 'CHI'}
-                                            </span>
+                                              {emoji}
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                              <p className="font-semibold text-gray-800 text-sm sm:text-base truncate">{tx.category}</p>
+                                              <p className="text-xs text-gray-400 line-clamp-2 break-words leading-relaxed mt-0.5">{formatDescription(tx.description)}</p>
+                                            </div>
                                           </div>
-                                          <button
-                                            onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
-                                            className="transaction-delete-btn text-gray-300 hover:text-rose-500 transition-all touch-target flex items-center justify-center"
-                                            aria-label="Xóa giao dịch"
-                                          >
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                            </svg>
-                                          </button>
+                                          <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 ml-3">
+                                            <div className="flex flex-col items-end">
+                                              <p className={`font-bold text-right text-sm sm:text-base whitespace-nowrap ${
+                                                tx.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'
+                                              }`}>
+                                                {tx.type === 'INCOME' ? '+' : '-'}{tx.amount.toLocaleString('vi-VN')}đ
+                                              </p>
+                                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md mt-0.5 ${
+                                                tx.type === 'INCOME' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                                              }`}>
+                                                {tx.type === 'INCOME' ? 'THU' : 'CHI'}
+                                              </span>
+                                            </div>
+                                            <button
+                                              onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
+                                              className="transaction-delete-btn text-gray-300 hover:text-rose-500 transition-all touch-target flex items-center justify-center"
+                                              aria-label="Xóa giao dịch"
+                                            >
+                                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                              </svg>
+                                            </button>
+                                          </div>
                                         </div>
-                                      </div>
-                                    );
-                                  })}
+                                      );
+                                    })}
+                                  </div>
                                 </div>
-                              </div>
-                            );
-                          });
-                        })()
+                              );
+                            });
+                          })()}
+
+                          {hasMore && (
+                            <div className="p-4 flex justify-center border-t border-gray-50">
+                              <button
+                                onClick={() => setVisibleCount(prev => prev + 20)}
+                                className="px-5 py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-100 font-semibold text-sm rounded-xl transition-all flex items-center gap-2 active:scale-95 touch-target"
+                              >
+                                <span>📂</span> Xem thêm (còn {remainingCount} giao dịch)
+                              </button>
+                            </div>
+                          )}
+                        </>
                       ) : (
                         <div className="p-8 sm:p-12 text-center text-gray-400">
                           <div className="text-4xl mb-3">📊</div>
