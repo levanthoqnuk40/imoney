@@ -98,25 +98,58 @@ export const SharedExpenseForm: React.FC<SharedExpenseFormProps> = ({ onSubmit, 
       alert('Vui lòng nhập tổng số tiền hợp lệ');
       return;
     }
-    if (splitMethod === 'custom' && !isCustomBalanced) {
-      alert(`Tổng tiền phân chia (${customSum.toLocaleString('vi-VN')}đ) phải khớp với tổng hóa đơn (${totalVal.toLocaleString('vi-VN')}đ). Chênh lệch: ${(totalVal - customSum).toLocaleString('vi-VN')}đ`);
+
+    // Filter out empty friend inputs
+    const validFriends = friends.map(f => f.trim()).filter(Boolean);
+    if (validFriends.length === 0) {
+      alert('Vui lòng nhập ít nhất tên một người bạn tham gia chia tiền');
       return;
     }
 
-    // Construct participant list
-    // Owner is index 0
+    // Construct participant list (Owner is index 0)
     const participantsList: Omit<ExpenseParticipant, 'id' | 'event_id'>[] = [
       { display_name: 'Bạn', is_owner: true }
     ];
-
-    friends.forEach(f => {
-      if (f.trim()) {
-        participantsList.push({
-          display_name: f.trim(),
-          is_owner: false
-        });
-      }
+    validFriends.forEach(name => {
+      participantsList.push({
+        display_name: name,
+        is_owner: false
+      });
     });
+
+    // Calculate splits based only on valid participants to avoid index mismatch
+    const validCount = participantsList.length;
+    let finalSplits: { participantIndex: number; amountDue: number }[] = [];
+
+    if (splitMethod === 'equal') {
+      const equalShare = Math.floor(totalVal / validCount);
+      const remainder = totalVal - equalShare * validCount;
+      
+      finalSplits = Array(validCount).fill(0).map((_, idx) => ({
+        participantIndex: idx,
+        amountDue: idx === 0 ? equalShare + remainder : equalShare
+      }));
+    } else {
+      // Map custom amounts for owner (index 0) and valid friends
+      const cleanCustomAmounts: number[] = [parseFloat(customAmounts[0]) || 0];
+      
+      friends.forEach((f, idx) => {
+        if (f.trim()) {
+          cleanCustomAmounts.push(parseFloat(customAmounts[idx + 1]) || 0);
+        }
+      });
+
+      const sum = cleanCustomAmounts.reduce((s, val) => s + val, 0);
+      if (Math.abs(sum - totalVal) > 1) {
+        alert(`Tổng tiền phân chia (${sum.toLocaleString('vi-VN')}đ) phải khớp với tổng hóa đơn (${totalVal.toLocaleString('vi-VN')}đ). Chênh lệch: ${(totalVal - sum).toLocaleString('vi-VN')}đ`);
+        return;
+      }
+
+      finalSplits = cleanCustomAmounts.map((amt, idx) => ({
+        participantIndex: idx,
+        amountDue: amt
+      }));
+    }
 
     onSubmit(
       {
@@ -128,7 +161,7 @@ export const SharedExpenseForm: React.FC<SharedExpenseFormProps> = ({ onSubmit, 
         description: description.trim() || undefined
       },
       participantsList,
-      calculatedSplits,
+      finalSplits,
       ownerCategory
     );
 
