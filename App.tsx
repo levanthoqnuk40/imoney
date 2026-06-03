@@ -90,6 +90,7 @@ const App: React.FC = () => {
   const loadDebtsRef = React.useRef<(() => Promise<void>) | null>(null);
   const loadGiftsRef = React.useRef<(() => Promise<void>) | null>(null);
   const loadBudgetsRef = React.useRef<(() => Promise<void>) | null>(null);
+  const loadCategoriesRef = React.useRef<(() => Promise<void>) | null>(null);
 
   // Network status hook
   const { isOnline, isSyncing, syncResult, dismissSyncResult } = useNetworkStatus({
@@ -321,6 +322,9 @@ const App: React.FC = () => {
       }
     }
   }, [user]);
+
+  // Keep ref in sync
+  loadCategoriesRef.current = loadCategories;
 
   // Handle categories changes (add/edit/delete) with cascade updates for renames
   const handleCategoriesChange = useCallback(async (newCategories: Category[], renameMap?: { oldName: string; newName: string }) => {
@@ -660,11 +664,11 @@ const App: React.FC = () => {
           // 2. Fetch fresh data from Supabase in the background (parallel)
           if (navigator.onLine) {
             Promise.all([
-              loadCategories(),
-              loadTransactions(),
-              loadBudgets(),
-              loadDebts(),
-              loadGifts(),
+              loadCategoriesRef.current ? loadCategoriesRef.current() : Promise.resolve(),
+              loadTransactionsRef.current ? loadTransactionsRef.current() : Promise.resolve(),
+              loadBudgetsRef.current ? loadBudgetsRef.current() : Promise.resolve(),
+              loadDebtsRef.current ? loadDebtsRef.current() : Promise.resolve(),
+              loadGiftsRef.current ? loadGiftsRef.current() : Promise.resolve(),
             ]).catch(err => console.error('Failed to reload fresh data in background:', err));
           }
         } catch (err) {
@@ -684,7 +688,7 @@ const App: React.FC = () => {
       setGifts([]);
       setIsLoading(false);
     }
-  }, [user, loadCategories, loadTransactions, loadBudgets, loadDebts, loadGifts, refreshPendingCount]);
+  }, [user, refreshPendingCount]);
 
   // Reschedule all notifications when data changes
   useEffect(() => {
