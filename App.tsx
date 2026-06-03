@@ -17,7 +17,7 @@ import GiftDetail from './components/GiftDetail';
 import { getFinancialAdvice } from './services/geminiService';
 import { supabase } from './services/supabase.service';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
-import { COLORS, GIFT_EVENT_TYPES, autoCategorize, getCategories, saveCategories } from './constants';
+import { COLORS, GIFT_EVENT_TYPES, autoCategorize, getCategories, saveCategories, DEFAULT_CATEGORIES } from './constants';
 import { User } from '@supabase/supabase-js';
 import * as OfflineDB from './services/offline.service';
 import * as SyncService from './services/sync.service';
