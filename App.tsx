@@ -507,6 +507,130 @@ const App: React.FC = () => {
   // Keep ref in sync for the sync handler
   loadTransactionsRef.current = loadTransactions;
 
+  // Load budgets — online: Supabase + cache; offline: IndexedDB
+  const loadBudgets = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('budgets')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (error) throw error;
+
+        const mapped: Budget[] = (data || []).map(b => ({
+          id: b.id,
+          category: b.category,
+          limit: parseFloat(b.budget_limit),
+          period: b.period || 'monthly',
+        }));
+
+        setBudgets(mapped);
+        await OfflineDB.clearStore('budgets');
+        await OfflineDB.putAll('budgets', mapped);
+      } else {
+        const cached = await OfflineDB.getAll<Budget>('budgets');
+        setBudgets(cached);
+      }
+    } catch (error) {
+      console.error('Error loading budgets:', error);
+      const cached = await OfflineDB.getAll<Budget>('budgets');
+      setBudgets(cached);
+    }
+  }, [user]);
+
+  // Keep ref in sync
+  loadBudgetsRef.current = loadBudgets;
+
+  // Load debts — online: Supabase + cache; offline: IndexedDB
+  const loadDebts = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('debts')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        const mappedDebts: Debt[] = (data || []).map(d => ({
+          id: d.id,
+          user_id: d.user_id,
+          type: d.type as 'receivable' | 'payable',
+          person_name: d.person_name,
+          original_amount: parseFloat(d.original_amount),
+          paid_amount: parseFloat(d.paid_amount || 0),
+          remaining_amount: parseFloat(d.original_amount) - parseFloat(d.paid_amount || 0),
+          created_date: d.created_date,
+          due_date: d.due_date || undefined,
+          description: d.description || undefined,
+          status: d.status as 'pending' | 'partial' | 'completed'
+        }));
+
+        setDebts(mappedDebts);
+        await OfflineDB.clearStore('debts');
+        await OfflineDB.putAll('debts', mappedDebts);
+      } else {
+        const cached = await OfflineDB.getAll<Debt>('debts');
+        setDebts(cached);
+      }
+    } catch (error) {
+      console.error('Error loading debts:', error);
+      const cached = await OfflineDB.getAll<Debt>('debts');
+      setDebts(cached);
+    }
+  }, [user]);
+
+  // Keep ref in sync
+  loadDebtsRef.current = loadDebts;
+
+  // Load gifts — online: Supabase + cache; offline: IndexedDB
+  const loadGifts = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('gift_records')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('event_date', { ascending: false });
+
+        if (error) throw error;
+
+        const mappedGifts: GiftRecord[] = (data || []).map(g => ({
+          id: g.id,
+          user_id: g.user_id,
+          direction: g.direction as GiftDirection,
+          person_name: g.person_name,
+          event_type: g.event_type as GiftEventType,
+          amount: parseFloat(g.amount),
+          event_date: g.event_date,
+          note: g.note || undefined
+        }));
+
+        setGifts(mappedGifts);
+        await OfflineDB.clearStore('gift_records');
+        await OfflineDB.putAll('gift_records', mappedGifts);
+      } else {
+        const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
+        setGifts(cached);
+      }
+    } catch (error) {
+      console.error('Error loading gifts:', error);
+      const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
+      setGifts(cached);
+    }
+  }, [user]);
+
+  // Keep ref in sync
+  loadGiftsRef.current = loadGifts;
+
   // Load all data with local-first cache (SWR) when user is authenticated
   useEffect(() => {
     if (user) {
@@ -826,42 +950,7 @@ const App: React.FC = () => {
   // BUDGET MANAGEMENT FUNCTIONS
   // ============================================
 
-  // Load budgets — online: Supabase + cache; offline: IndexedDB
-  const loadBudgets = useCallback(async () => {
-    if (!user) return;
 
-    try {
-      if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('budgets')
-          .select('*')
-          .eq('user_id', user.id);
-
-        if (error) throw error;
-
-        const mapped: Budget[] = (data || []).map(b => ({
-          id: b.id,
-          category: b.category,
-          limit: parseFloat(b.budget_limit),
-          period: b.period || 'monthly',
-        }));
-
-        setBudgets(mapped);
-        await OfflineDB.clearStore('budgets');
-        await OfflineDB.putAll('budgets', mapped);
-      } else {
-        const cached = await OfflineDB.getAll<Budget>('budgets');
-        setBudgets(cached);
-      }
-    } catch (error) {
-      console.error('Error loading budgets:', error);
-      const cached = await OfflineDB.getAll<Budget>('budgets');
-      setBudgets(cached);
-    }
-  }, [user]);
-
-  // Keep ref in sync
-  loadBudgetsRef.current = loadBudgets;
 
 
 
@@ -948,50 +1037,7 @@ const App: React.FC = () => {
   // DEBT MANAGEMENT FUNCTIONS
   // ============================================
 
-  // Load debts — online: Supabase + cache; offline: IndexedDB
-  const loadDebts = useCallback(async () => {
-    if (!user) return;
 
-    try {
-      if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('debts')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-
-        const mappedDebts: Debt[] = (data || []).map(d => ({
-          id: d.id,
-          user_id: d.user_id,
-          type: d.type as 'receivable' | 'payable',
-          person_name: d.person_name,
-          original_amount: parseFloat(d.original_amount),
-          paid_amount: parseFloat(d.paid_amount || 0),
-          remaining_amount: parseFloat(d.original_amount) - parseFloat(d.paid_amount || 0),
-          created_date: d.created_date,
-          due_date: d.due_date || undefined,
-          description: d.description || undefined,
-          status: d.status as 'pending' | 'partial' | 'completed'
-        }));
-
-        setDebts(mappedDebts);
-        await OfflineDB.clearStore('debts');
-        await OfflineDB.putAll('debts', mappedDebts);
-      } else {
-        const cached = await OfflineDB.getAll<Debt>('debts');
-        setDebts(cached);
-      }
-    } catch (error) {
-      console.error('Error loading debts:', error);
-      const cached = await OfflineDB.getAll<Debt>('debts');
-      setDebts(cached);
-    }
-  }, [user]);
-
-  // Keep ref in sync
-  loadDebtsRef.current = loadDebts;
 
 
 
@@ -1109,47 +1155,7 @@ const App: React.FC = () => {
   // GIFT MONEY TRACKING FUNCTIONS
   // ============================================
 
-  // Load gifts — online: Supabase + cache; offline: IndexedDB
-  const loadGifts = useCallback(async () => {
-    if (!user) return;
 
-    try {
-      if (navigator.onLine) {
-        const { data, error } = await supabase
-          .from('gift_records')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('event_date', { ascending: false });
-
-        if (error) throw error;
-
-        const mappedGifts: GiftRecord[] = (data || []).map(g => ({
-          id: g.id,
-          user_id: g.user_id,
-          direction: g.direction as GiftDirection,
-          person_name: g.person_name,
-          event_type: g.event_type as GiftEventType,
-          amount: parseFloat(g.amount),
-          event_date: g.event_date,
-          note: g.note || undefined
-        }));
-
-        setGifts(mappedGifts);
-        await OfflineDB.clearStore('gift_records');
-        await OfflineDB.putAll('gift_records', mappedGifts);
-      } else {
-        const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
-        setGifts(cached);
-      }
-    } catch (error) {
-      console.error('Error loading gifts:', error);
-      const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
-      setGifts(cached);
-    }
-  }, [user]);
-
-  // Keep ref in sync
-  loadGiftsRef.current = loadGifts;
 
 
 
