@@ -274,6 +274,7 @@ export interface ParticipantSettlementState {
 
 // Supabase synchronization payload schemas for shared expenses
 export type SupabaseExpenseEventInsert = {
+  id?: string;
   _tempId?: string;
   user_id: string;
   title: string;
@@ -287,6 +288,7 @@ export type SupabaseExpenseEventInsert = {
 };
 
 export type SupabaseExpenseParticipantInsert = {
+  id?: string;
   _tempId?: string;
   event_id: string;
   display_name: string;
@@ -296,6 +298,7 @@ export type SupabaseExpenseParticipantInsert = {
 };
 
 export type SupabaseExpenseSplitInsert = {
+  id?: string;
   _tempId?: string;
   event_id: string;
   participant_id: string;
@@ -304,6 +307,7 @@ export type SupabaseExpenseSplitInsert = {
 };
 
 export type SupabaseRepaymentInsert = {
+  id?: string;
   _tempId?: string;
   event_id: string;
   participant_id: string;

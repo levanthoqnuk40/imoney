@@ -26,6 +26,17 @@ import { useNetworkStatus } from './useNetworkStatus';
 import { autoCategorize, getCategories, saveCategories, DEFAULT_CATEGORIES } from '../constants';
 import { getFinancialAdvice } from '../services/geminiService';
 
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
+
 export function useFinancialData(user: User | null) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -1187,11 +1198,11 @@ export function useFinancialData(user: User | null) {
   ) => {
     if (!user) return;
 
-    const eventId = `temp_evt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const eventId = generateUUID();
     
     // Create participants with correct ID and event_id
     const localParticipants: ExpenseParticipant[] = participantsInput.map((p, idx) => ({
-      id: `temp_par_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
+      id: generateUUID(),
       event_id: eventId,
       display_name: p.display_name,
       phone_number: p.phone_number,
@@ -1203,7 +1214,7 @@ export function useFinancialData(user: User | null) {
     const localSplits: ExpenseSplit[] = splitsInput.map((s, idx) => {
       const p = localParticipants[s.participantIndex];
       return {
-        id: `temp_spl_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
+        id: generateUUID(),
         event_id: eventId,
         participant_id: p.id,
         amount_due: s.amountDue
@@ -1277,6 +1288,7 @@ export function useFinancialData(user: User | null) {
       table: 'expense_events',
       action: 'INSERT',
       data: {
+        id: eventId,
         _tempId: eventId,
         user_id: user.id,
         title: localEvent.title,
@@ -1295,6 +1307,7 @@ export function useFinancialData(user: User | null) {
         table: 'expense_participants',
         action: 'INSERT',
         data: {
+          id: p.id,
           _tempId: p.id,
           event_id: eventId,
           display_name: p.display_name,
@@ -1310,6 +1323,7 @@ export function useFinancialData(user: User | null) {
         table: 'expense_splits',
         action: 'INSERT',
         data: {
+          id: s.id,
           _tempId: s.id,
           event_id: eventId,
           participant_id: s.participant_id,
@@ -1383,7 +1397,7 @@ export function useFinancialData(user: User | null) {
   const handleAddRepayment = useCallback(async (repaymentData: Omit<Repayment, 'id'>) => {
     if (!user) return;
 
-    const tempId = `temp_rep_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const tempId = generateUUID();
     const newRepayment: Repayment = {
       id: tempId,
       event_id: repaymentData.event_id,
@@ -1444,6 +1458,7 @@ export function useFinancialData(user: User | null) {
       table: 'repayments',
       action: 'INSERT',
       data: {
+        id: tempId,
         _tempId: tempId,
         event_id: repaymentData.event_id,
         participant_id: repaymentData.participant_id,
