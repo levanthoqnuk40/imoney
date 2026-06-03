@@ -1248,7 +1248,10 @@ const App: React.FC = () => {
           transaction={selectedTransaction}
           onClose={() => setSelectedTransaction(null)}
           onDelete={handleDeleteTransaction}
-          onUpdateTransaction={handleUpdateTransaction}
+          onUpdateTransaction={async (id, description, category) => {
+            await handleUpdateTransaction(id, description, category);
+            setSelectedTransaction(prev => prev && prev.id === id ? { ...prev, description, category: category || prev.category } : prev);
+          }}
           categories={categories}
         />
       )}
