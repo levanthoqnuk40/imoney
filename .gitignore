@@ -12,9 +12,26 @@ dist
 dist-ssr
 *.local
 
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.p12
+*.jks
+*.keystore
+
 # Capacitor Android
 android/app/build
 android/.gradle
+android/local.properties
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
 
 # Editor directories and files
 .vscode/*
@@ -26,3 +43,4 @@ android/.gradle
 *.njsproj
 *.sln
 *.sw?
+Thumbs.db

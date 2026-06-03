@@ -70,6 +70,37 @@ export function useFinancialData(user: User | null) {
     setPendingSyncCount(count);
   }, []);
 
+  // A helper to merge remote data with local items currently in the sync queue
+  const getMergedLocalAndRemote = useCallback(async <T extends { id: string }>(
+    tableName: string,
+    remoteItems: T[]
+  ): Promise<T[]> => {
+    try {
+      const pendingItems = await SyncService.getPendingItems();
+      const pendingIds = new Set(
+        pendingItems
+          .filter(item => item.table === tableName && (item.action === 'INSERT' || item.action === 'UPDATE'))
+          .map(item => item.data.id)
+      );
+
+      if (pendingIds.size === 0) {
+        return remoteItems;
+      }
+
+      const localItems = await OfflineDB.getAll<T>(tableName as any);
+      const unsyncedItems = localItems.filter(item => pendingIds.has(item.id));
+      
+      const remoteIds = new Set(remoteItems.map(item => item.id));
+      return [
+        ...remoteItems,
+        ...unsyncedItems.filter(item => !remoteIds.has(item.id))
+      ];
+    } catch (err) {
+      console.warn(`Failed to merge local and remote for table ${tableName}:`, err);
+      return remoteItems;
+    }
+  }, []);
+
   // Process queue and show UI alert if there are sync errors
   const processQueueAndLog = useCallback(async (context: string) => {
     try {
@@ -171,9 +202,10 @@ export function useFinancialData(user: User | null) {
         }));
 
         const processed = await autoCategorizeTransactions(mappedTransactions, true);
-        setTransactions(processed);
+        const merged = await getMergedLocalAndRemote('transactions', processed);
+        setTransactions(merged);
         await OfflineDB.clearStore('transactions');
-        await OfflineDB.putAll('transactions', processed);
+        await OfflineDB.putAll('transactions', merged);
       } else {
         const cached = await OfflineDB.getAll<Transaction>('transactions');
         cached.sort((a, b) => b.date.localeCompare(a.date));
@@ -448,9 +480,10 @@ export function useFinancialData(user: User | null) {
           period: b.period || 'monthly',
         }));
 
-        setBudgets(mapped);
+        const merged = await getMergedLocalAndRemote('budgets', mapped);
+        setBudgets(merged);
         await OfflineDB.clearStore('budgets');
-        await OfflineDB.putAll('budgets', mapped);
+        await OfflineDB.putAll('budgets', merged);
       } else {
         const cached = await OfflineDB.getAll<Budget>('budgets');
         setBudgets(cached);
@@ -492,9 +525,10 @@ export function useFinancialData(user: User | null) {
           status: d.status as 'pending' | 'partial' | 'completed'
         }));
 
-        setDebts(mappedDebts);
+        const merged = await getMergedLocalAndRemote('debts', mappedDebts);
+        setDebts(merged);
         await OfflineDB.clearStore('debts');
-        await OfflineDB.putAll('debts', mappedDebts);
+        await OfflineDB.putAll('debts', merged);
       } else {
         const cached = await OfflineDB.getAll<Debt>('debts');
         setDebts(cached);
@@ -533,9 +567,10 @@ export function useFinancialData(user: User | null) {
           note: g.note || undefined
         }));
 
-        setGifts(mappedGifts);
+        const merged = await getMergedLocalAndRemote('gift_records', mappedGifts);
+        setGifts(merged);
         await OfflineDB.clearStore('gift_records');
-        await OfflineDB.putAll('gift_records', mappedGifts);
+        await OfflineDB.putAll('gift_records', merged);
       } else {
         const cached = await OfflineDB.getAll<GiftRecord>('gift_records');
         setGifts(cached);
@@ -630,20 +665,25 @@ export function useFinancialData(user: User | null) {
           }));
         }
 
-        setExpenseEvents(mappedEvents);
-        setExpenseParticipants(mappedParticipants);
-        setExpenseSplits(mappedSplits);
-        setRepayments(mappedRepayments);
+        const mergedEvents = await getMergedLocalAndRemote('expense_events', mappedEvents);
+        const mergedParticipants = await getMergedLocalAndRemote('expense_participants', mappedParticipants);
+        const mergedSplits = await getMergedLocalAndRemote('expense_splits', mappedSplits);
+        const mergedRepayments = await getMergedLocalAndRemote('repayments', mappedRepayments);
+
+        setExpenseEvents(mergedEvents);
+        setExpenseParticipants(mergedParticipants);
+        setExpenseSplits(mergedSplits);
+        setRepayments(mergedRepayments);
 
         await OfflineDB.clearStore('expense_events');
         await OfflineDB.clearStore('expense_participants');
         await OfflineDB.clearStore('expense_splits');
         await OfflineDB.clearStore('repayments');
 
-        await OfflineDB.putAll('expense_events', mappedEvents);
-        await OfflineDB.putAll('expense_participants', mappedParticipants);
-        await OfflineDB.putAll('expense_splits', mappedSplits);
-        await OfflineDB.putAll('repayments', mappedRepayments);
+        await OfflineDB.putAll('expense_events', mergedEvents);
+        await OfflineDB.putAll('expense_participants', mergedParticipants);
+        await OfflineDB.putAll('expense_splits', mergedSplits);
+        await OfflineDB.putAll('repayments', mergedRepayments);
       } else {
         const cachedEvents = await OfflineDB.getAll<ExpenseEvent>('expense_events');
         const cachedParticipants = await OfflineDB.getAll<ExpenseParticipant>('expense_participants');

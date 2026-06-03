@@ -19,13 +19,32 @@ const MAX_RETRIES = 3;
 
 // ------- Queue operations -------
 
+let lastTimestamp = 0;
+
 export async function addToQueue(
     item: SyncPayload & { pendingReceiptBase64?: string; pendingReceiptFileName?: string },
 ): Promise<void> {
+    if (lastTimestamp === 0) {
+        try {
+            const items = await OfflineDB.getAll<SyncQueueItem>('sync_queue');
+            if (items.length > 0) {
+                lastTimestamp = Math.max(...items.map(i => i.timestamp));
+            }
+        } catch (e) {
+            console.error('Failed to get max timestamp from queue:', e);
+        }
+    }
+
+    let now = Date.now();
+    if (now <= lastTimestamp) {
+        now = lastTimestamp + 1;
+    }
+    lastTimestamp = now;
+
     const queueItem: SyncQueueItem = {
         ...item,
-        id: `sync_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-        timestamp: Date.now(),
+        id: `sync_${now}_${Math.random().toString(36).slice(2, 9)}`,
+        timestamp: now,
         retryCount: 0,
     } as SyncQueueItem;
     await OfflineDB.put('sync_queue', queueItem);
