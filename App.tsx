@@ -159,34 +159,41 @@ const App: React.FC = () => {
 
   // Helper to run auto-categorization on a list of transactions
   const autoCategorizeTransactions = useCallback(async (rawTxList: Transaction[], updateDb: boolean) => {
-    return Promise.all(rawTxList.map(async t => {
+    if (rawTxList.length === 0) return [];
+    
+    const dbUpdates: { id: string; category: string }[] = [];
+
+    const processed = await Promise.all(rawTxList.map(async t => {
       let category = t.category;
       if (category === 'Chuyển khoản đi' || category === 'Chuyển khoản nhận' || category === 'Khác') {
         const autoCat = autoCategorize(t.description, categories);
         if (autoCat && autoCat.type === t.type) {
           category = autoCat.category;
           if (updateDb && !t.id.startsWith('temp_')) {
-            // Update Supabase in background
-            if (navigator.onLine) {
-              supabase
-                .from('transactions')
-                .update({ category })
-                .eq('id', t.id)
-                .then(({ error }) => {
-                  if (error) console.error('Error auto-updating category in DB:', error);
-                });
-            }
-            // Update IndexedDB in background
-            OfflineDB.getById<Transaction>('transactions', t.id).then(cached => {
-              if (cached) {
-                OfflineDB.put('transactions', { ...cached, category });
-              }
-            });
+            dbUpdates.push({ id: t.id, category });
+            // Update IndexedDB immediately
+            OfflineDB.put('transactions', { ...t, category }).then();
           }
         }
       }
       return { ...t, category };
     }));
+
+    if (dbUpdates.length > 0 && navigator.onLine) {
+      // Run Supabase updates sequentially in the background to avoid connection exhaustion/rate limiting
+      (async () => {
+        for (const item of dbUpdates) {
+          try {
+            await supabase.from('transactions').update({ category: item.category }).eq('id', item.id);
+            await new Promise(resolve => setTimeout(resolve, 150)); // 150ms throttle delay
+          } catch (err) {
+            console.error('Error auto-updating category in background DB:', err);
+          }
+        }
+      })();
+    }
+
+    return processed;
   }, [categories]);
 
   // Load transactions — online: fetch from Supabase + cache; offline: read IndexedDB
@@ -500,16 +507,60 @@ const App: React.FC = () => {
   // Keep ref in sync for the sync handler
   loadTransactionsRef.current = loadTransactions;
 
-  // Load transactions and categories when user is authenticated
+  // Load all data with local-first cache (SWR) when user is authenticated
   useEffect(() => {
     if (user) {
-      loadCategories();
-      loadTransactions();
+      const initData = async () => {
+        try {
+          // 1. Instantly load from IndexedDB (local-first)
+          const [cachedCats, cachedTxs, cachedBudgets, cachedDebts, cachedGifts] = await Promise.all([
+            OfflineDB.getAll<Category>('categories'),
+            OfflineDB.getAll<Transaction>('transactions'),
+            OfflineDB.getAll<Budget>('budgets'),
+            OfflineDB.getAll<Debt>('debts'),
+            OfflineDB.getAll<GiftRecord>('gift_records'),
+          ]);
+
+          if (cachedCats && cachedCats.length > 0) setCategories(cachedCats);
+          if (cachedTxs && cachedTxs.length > 0) {
+            cachedTxs.sort((a, b) => b.date.localeCompare(a.date));
+            setTransactions(cachedTxs);
+          }
+          if (cachedBudgets && cachedBudgets.length > 0) setBudgets(cachedBudgets);
+          if (cachedDebts && cachedDebts.length > 0) setDebts(cachedDebts);
+          if (cachedGifts && cachedGifts.length > 0) setGifts(cachedGifts);
+
+          // Render UI instantly!
+          setIsLoading(false);
+
+          // 2. Fetch fresh data from Supabase in the background (parallel)
+          if (navigator.onLine) {
+            Promise.all([
+              loadCategories(),
+              loadTransactions(),
+              loadBudgets(),
+              loadDebts(),
+              loadGifts(),
+            ]).catch(err => console.error('Failed to reload fresh data in background:', err));
+          }
+        } catch (err) {
+          console.error('Error during local-first data load:', err);
+          setIsLoading(false);
+        }
+      };
+
+      initData();
       refreshPendingCount();
     } else {
+      // Clean up state on logout
       setCategories(DEFAULT_CATEGORIES);
+      setTransactions([]);
+      setBudgets([]);
+      setDebts([]);
+      setGifts([]);
+      setIsLoading(false);
     }
-  }, [user, loadCategories, loadTransactions, refreshPendingCount]);
+  }, [user, loadCategories, loadTransactions, loadBudgets, loadDebts, loadGifts, refreshPendingCount]);
 
   // Reschedule all notifications when data changes
   useEffect(() => {
@@ -812,12 +863,7 @@ const App: React.FC = () => {
   // Keep ref in sync
   loadBudgetsRef.current = loadBudgets;
 
-  // Load budgets when user is authenticated
-  useEffect(() => {
-    if (user) {
-      loadBudgets();
-    }
-  }, [user, loadBudgets]);
+
 
   const handleSaveBudgets = async (newBudgets: Budget[]) => {
     if (!user) return;
@@ -947,12 +993,7 @@ const App: React.FC = () => {
   // Keep ref in sync
   loadDebtsRef.current = loadDebts;
 
-  // Load debts when user is authenticated
-  useEffect(() => {
-    if (user) {
-      loadDebts();
-    }
-  }, [user, loadDebts]);
+
 
   // Add new debt
   const handleAddDebt = async (newDebt: {
@@ -1110,12 +1151,7 @@ const App: React.FC = () => {
   // Keep ref in sync
   loadGiftsRef.current = loadGifts;
 
-  // Load gifts when user is authenticated
-  useEffect(() => {
-    if (user) {
-      loadGifts();
-    }
-  }, [user, loadGifts]);
+
 
   // Add new gift
   const handleAddGift = async (newGift: {
