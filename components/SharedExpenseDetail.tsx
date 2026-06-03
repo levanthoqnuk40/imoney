@@ -3,20 +3,39 @@ import { ExpenseEvent, ExpenseParticipant, ExpenseSplit, Repayment } from '../ty
 import { getParticipantSettlementStates, getEventRepaymentProgress, generateReminderText } from '../services/sharedExpense.service';
 
 const POPULAR_BANKS = [
-  { id: 'mbb', name: 'MB Bank (MB)' },
-  { id: 'vcb', name: 'Vietcombank (VCB)' },
-  { id: 'tcb', name: 'Techcombank (TCB)' },
-  { id: 'acb', name: 'ACB' },
-  { id: 'bidv', name: 'BIDV' },
-  { id: 'vietinbank', name: 'VietinBank' },
-  { id: 'vpb', name: 'VPBank' },
-  { id: 'tpb', name: 'TPBank' },
-  { id: 'agribank', name: 'Agribank' },
-  { id: 'vib', name: 'VIB' },
-  { id: 'sacombank', name: 'Sacombank' },
-  { id: 'hdb', name: 'HDBank' },
-  { id: 'shb', name: 'SHB' },
+  { id: 'MB', name: 'MB Bank (MB)' },
+  { id: 'VCB', name: 'Vietcombank (VCB)' },
+  { id: 'TCB', name: 'Techcombank (TCB)' },
+  { id: 'ACB', name: 'ACB' },
+  { id: 'BIDV', name: 'BIDV' },
+  { id: 'CTG', name: 'VietinBank (CTG)' },
+  { id: 'VPB', name: 'VPBank (VPB)' },
+  { id: 'TPB', name: 'TPBank (TPB)' },
+  { id: 'VBA', name: 'Agribank (VBA)' },
+  { id: 'VIB', name: 'VIB' },
+  { id: 'STB', name: 'Sacombank (STB)' },
+  { id: 'HDB', name: 'HDBank (HDB)' },
+  { id: 'SHB', name: 'SHB' },
 ];
+
+const getOfficialBankId = (id: string): string => {
+  const mapping: Record<string, string> = {
+    mbb: 'MB',
+    vcb: 'VCB',
+    tcb: 'TCB',
+    acb: 'ACB',
+    bidv: 'BIDV',
+    vietinbank: 'CTG',
+    vpb: 'VPB',
+    tpb: 'TPB',
+    agribank: 'VBA',
+    vib: 'VIB',
+    sacombank: 'STB',
+    hdb: 'HDB',
+    shb: 'SHB',
+  };
+  return mapping[id.toLowerCase()] || id;
+};
 
 interface SharedExpenseDetailProps {
   event: ExpenseEvent;
@@ -351,7 +370,7 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
                               {/* QR Code image from VietQR.io */}
                               <div className="bg-white p-2 rounded-xl border border-gray-200/60 shadow-sm">
                                 <img
-                                  src={`https://img.vietqr.io/image/${bankInfo.bankId}-${bankInfo.accountNo}-compact2.png?amount=${amountRemaining}&addInfo=${encodeURIComponent(`IMN CH ${event.id.slice(-5)}${participant.id.slice(-5)}`)}&accountName=${encodeURIComponent(bankInfo.accountName)}`}
+                                  src={`https://img.vietqr.io/image/${getOfficialBankId(bankInfo.bankId)}-${bankInfo.accountNo}-compact2.png?amount=${amountRemaining}&addInfo=${encodeURIComponent(`IMN CH ${event.id.slice(-5)}${participant.id.slice(-5)}`)}&accountName=${encodeURIComponent(bankInfo.accountName)}`}
                                   alt="Mã QR Chuyển khoản"
                                   className="w-48 h-48 mx-auto object-contain"
                                   onError={(e) => {
@@ -362,7 +381,7 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
                               
                               {/* QR Details */}
                               <div className="text-[11px] text-gray-500 text-left space-y-1 w-full border-t border-gray-100 pt-2.5">
-                                <p>🏦 <strong>Ngân hàng:</strong> {POPULAR_BANKS.find(b => b.id === bankInfo.bankId)?.name || bankInfo.bankId.toUpperCase()}</p>
+                                <p>🏦 <strong>Ngân hàng:</strong> {POPULAR_BANKS.find(b => b.id === getOfficialBankId(bankInfo.bankId))?.name || bankInfo.bankId.toUpperCase()}</p>
                                 <p>💳 <strong>Số tài khoản:</strong> {bankInfo.accountNo}</p>
                                 <p>👤 <strong>Chủ tài khoản:</strong> {bankInfo.accountName}</p>
                                 <p>💵 <strong>Số tiền:</strong> <strong className="text-gray-800">{amountRemaining.toLocaleString('vi-VN')}đ</strong></p>
