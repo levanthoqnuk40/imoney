@@ -164,7 +164,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden safe-bottom">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden">
       {/* Offline Banner */}
       {!isOnline && (
         <div className="bg-amber-500 text-white text-center py-2 px-4 text-sm font-medium flex items-center justify-center gap-2 sticky top-0 z-50">
@@ -396,7 +396,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="w-full max-w-6xl mx-auto px-4 py-4 sm:py-6 lg:py-8 safe-bottom">
+      <main className="w-full max-w-6xl mx-auto px-4 py-4 sm:py-6 lg:py-8 pb-24 sm:pb-6 lg:pb-8">
         {/* Dashboard View */}
         {currentView === 'dashboard' && (
           <Dashboard
@@ -517,7 +517,7 @@ const App: React.FC = () => {
 
                 {/* Transaction List */}
                 <div className="card overflow-hidden">
-                  <div className="sticky top-[56px] sm:top-[64px] z-20 bg-white border-b border-gray-100 shadow-sm">
+                  <div className="bg-white border-b border-gray-100 shadow-sm">
                     <div className="p-4 sm:p-6 flex flex-col gap-4">
                       <div className="flex justify-between items-center">
                         <h3 className="text-base sm:text-lg font-bold text-gray-800">Lịch sử giao dịch</h3>
