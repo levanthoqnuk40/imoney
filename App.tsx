@@ -1035,13 +1035,19 @@ const App: React.FC = () => {
       {/* Desktop FAB */}
       <div className="hidden sm:block fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
         <button
-          onClick={() => setIsFormOpen(true)}
+          onClick={() => {
+            if (currentView === 'debts') setIsDebtFormOpen(true);
+            else if (currentView === 'gifts') setIsGiftFormOpen(true);
+            else setIsFormOpen(true);
+          }}
           className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 group"
         >
           <svg className="w-5 h-5 sm:w-6 sm:h-6 transform group-hover:rotate-90 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path>
           </svg>
-          <span className="font-bold text-sm sm:text-base">Thêm Giao Dịch</span>
+          <span className="font-bold text-sm sm:text-base">
+            {currentView === 'debts' ? 'Thêm Khoản Nợ' : currentView === 'gifts' ? 'Thêm Ghi Nhớ' : 'Thêm Giao Dịch'}
+          </span>
         </button>
       </div>
 
