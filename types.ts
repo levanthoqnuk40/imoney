@@ -103,6 +103,7 @@ export type ViewType = 'dashboard' | 'transactions' | 'debts' | 'gifts' | 'share
 // ============================================
 
 export type SupabaseTransactionInsert = {
+  id?: string;
   _tempId?: string;
   user_id: string;
   type: 'income' | 'expense';

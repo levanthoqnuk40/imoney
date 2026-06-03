@@ -1229,7 +1229,7 @@ export function useFinancialData(user: User | null) {
     let linkedTxId: string | undefined = undefined;
 
     if (ownerSplitAmount > 0) {
-      linkedTxId = `temp_tx_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      linkedTxId = generateUUID();
       const personalTx: Transaction = {
         id: linkedTxId,
         amount: ownerSplitAmount,
@@ -1248,6 +1248,7 @@ export function useFinancialData(user: User | null) {
         table: 'transactions',
         action: 'INSERT',
         data: {
+          id: linkedTxId,
           _tempId: linkedTxId,
           user_id: user.id,
           type: 'expense',
@@ -1333,12 +1334,17 @@ export function useFinancialData(user: User | null) {
       });
     }
 
-    await refreshPendingCount();
-    
-    // Background refresh if online
-    if (navigator.onLine && loadExpenseDataRef.current) {
-      loadExpenseDataRef.current().catch(err => console.error('Error reloading after add:', err));
+    if (navigator.onLine) {
+      try {
+        await SyncService.processQueue();
+      } catch (err) {
+        console.error('Error processing queue after add:', err);
+      }
+      if (loadExpenseDataRef.current) {
+        loadExpenseDataRef.current().catch(err => console.error('Error reloading after add:', err));
+      }
     }
+    await refreshPendingCount();
   }, [user, refreshPendingCount]);
 
   const handleDeleteExpenseEvent = useCallback(async (eventId: string) => {
@@ -1391,6 +1397,13 @@ export function useFinancialData(user: User | null) {
       });
     }
 
+    if (navigator.onLine) {
+      try {
+        await SyncService.processQueue();
+      } catch (err) {
+        console.error('Error processing queue after delete event:', err);
+      }
+    }
     await refreshPendingCount();
   }, [user, expenseEvents, expenseParticipants, expenseSplits, repayments, refreshPendingCount]);
 
@@ -1470,11 +1483,17 @@ export function useFinancialData(user: User | null) {
       }
     });
 
-    await refreshPendingCount();
-
-    if (navigator.onLine && loadExpenseDataRef.current) {
-      loadExpenseDataRef.current().catch(err => console.error('Error reloading after repayment:', err));
+    if (navigator.onLine) {
+      try {
+        await SyncService.processQueue();
+      } catch (err) {
+        console.error('Error processing queue after repayment:', err);
+      }
+      if (loadExpenseDataRef.current) {
+        loadExpenseDataRef.current().catch(err => console.error('Error reloading after repayment:', err));
+      }
     }
+    await refreshPendingCount();
   }, [user, repayments, expenseEvents, expenseParticipants, expenseSplits, refreshPendingCount]);
 
   const handleDeleteRepayment = useCallback(async (repaymentId: string) => {
@@ -1534,6 +1553,13 @@ export function useFinancialData(user: User | null) {
       });
     }
 
+    if (navigator.onLine) {
+      try {
+        await SyncService.processQueue();
+      } catch (err) {
+        console.error('Error processing queue after delete repayment:', err);
+      }
+    }
     await refreshPendingCount();
   }, [user, repayments, expenseEvents, expenseParticipants, expenseSplits, refreshPendingCount]);
 
