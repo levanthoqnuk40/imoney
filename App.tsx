@@ -17,6 +17,7 @@ import GiftDetail from './components/GiftDetail';
 import { useAuth } from './hooks/useAuth';
 import { useFinancialData } from './hooks/useFinancialData';
 import { GIFT_EVENT_TYPES, COLORS } from './constants';
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
 
 // Clean up description metadata and technical codes for mobile
 const formatDescription = (desc: string) => {
