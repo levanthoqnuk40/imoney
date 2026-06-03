@@ -10,7 +10,12 @@ import {
   GiftDirection,
   GiftEventType,
   DebtType,
-  SyncPayload
+  SyncPayload,
+  ExpenseEvent,
+  ExpenseParticipant,
+  ExpenseSplit,
+  Repayment,
+  ExpenseEventStatus
 } from '../types';
 import { supabase } from '../services/supabase.service';
 import * as OfflineDB from '../services/offline.service';
@@ -27,6 +32,10 @@ export function useFinancialData(user: User | null) {
   const [categories, setCategories] = useState<Category[]>(() => getCategories());
   const [debts, setDebts] = useState<Debt[]>([]);
   const [gifts, setGifts] = useState<GiftRecord[]>([]);
+  const [expenseEvents, setExpenseEvents] = useState<ExpenseEvent[]>([]);
+  const [expenseParticipants, setExpenseParticipants] = useState<ExpenseParticipant[]>([]);
+  const [expenseSplits, setExpenseSplits] = useState<ExpenseSplit[]>([]);
+  const [repayments, setRepayments] = useState<Repayment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // AI Insights State
@@ -42,6 +51,7 @@ export function useFinancialData(user: User | null) {
   const loadGiftsRef = useRef<(() => Promise<void>) | null>(null);
   const loadBudgetsRef = useRef<(() => Promise<void>) | null>(null);
   const loadCategoriesRef = useRef<(() => Promise<void>) | null>(null);
+  const loadExpenseDataRef = useRef<(() => Promise<void>) | null>(null);
 
   // Refresh pending count helper
   const refreshPendingCount = useCallback(async () => {
@@ -510,17 +520,143 @@ export function useFinancialData(user: User | null) {
 
   loadGiftsRef.current = loadGifts;
 
+  // Load expense events, participants, splits, repayments — local first, sync online
+  const loadExpenseData = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data: eventsData, error: eventsErr } = await supabase
+          .from('expense_events')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('event_date', { ascending: false });
+
+        if (eventsErr) throw eventsErr;
+
+        const mappedEvents: ExpenseEvent[] = (eventsData || []).map(e => ({
+          id: e.id,
+          user_id: e.user_id,
+          title: e.title,
+          event_date: e.event_date,
+          total_amount: parseFloat(e.total_amount),
+          split_method: e.split_method as 'equal' | 'custom',
+          due_date: e.due_date || undefined,
+          description: e.description || undefined,
+          status: e.status as 'open' | 'partial' | 'settled',
+          transaction_id: e.transaction_id || undefined,
+        }));
+
+        const eventIds = mappedEvents.map(e => e.id);
+        let mappedParticipants: ExpenseParticipant[] = [];
+        let mappedSplits: ExpenseSplit[] = [];
+        let mappedRepayments: Repayment[] = [];
+
+        if (eventIds.length > 0) {
+          const { data: pData, error: pErr } = await supabase
+            .from('expense_participants')
+            .select('*')
+            .in('event_id', eventIds);
+          if (pErr) throw pErr;
+
+          mappedParticipants = (pData || []).map(p => ({
+            id: p.id,
+            event_id: p.event_id,
+            display_name: p.display_name,
+            phone_number: p.phone_number || undefined,
+            is_owner: p.is_owner,
+            note: p.note || undefined,
+          }));
+
+          const { data: sData, error: sErr } = await supabase
+            .from('expense_splits')
+            .select('*')
+            .in('event_id', eventIds);
+          if (sErr) throw sErr;
+
+          mappedSplits = (sData || []).map(s => ({
+            id: s.id,
+            event_id: s.event_id,
+            participant_id: s.participant_id,
+            amount_due: parseFloat(s.amount_due),
+            note: s.note || undefined,
+          }));
+
+          const { data: rData, error: rErr } = await supabase
+            .from('repayments')
+            .select('*')
+            .in('event_id', eventIds)
+            .order('repayment_date', { ascending: false });
+          if (rErr) throw rErr;
+
+          mappedRepayments = (rData || []).map(r => ({
+            id: r.id,
+            event_id: r.event_id,
+            participant_id: r.participant_id,
+            repayment_date: r.repayment_date,
+            amount: parseFloat(r.amount),
+            payment_method: r.payment_method || undefined,
+            reference_no: r.reference_no || undefined,
+            note: r.note || undefined,
+          }));
+        }
+
+        setExpenseEvents(mappedEvents);
+        setExpenseParticipants(mappedParticipants);
+        setExpenseSplits(mappedSplits);
+        setRepayments(mappedRepayments);
+
+        await OfflineDB.clearStore('expense_events');
+        await OfflineDB.clearStore('expense_participants');
+        await OfflineDB.clearStore('expense_splits');
+        await OfflineDB.clearStore('repayments');
+
+        await OfflineDB.putAll('expense_events', mappedEvents);
+        await OfflineDB.putAll('expense_participants', mappedParticipants);
+        await OfflineDB.putAll('expense_splits', mappedSplits);
+        await OfflineDB.putAll('repayments', mappedRepayments);
+      } else {
+        const cachedEvents = await OfflineDB.getAll<ExpenseEvent>('expense_events');
+        const cachedParticipants = await OfflineDB.getAll<ExpenseParticipant>('expense_participants');
+        const cachedSplits = await OfflineDB.getAll<ExpenseSplit>('expense_splits');
+        const cachedRepayments = await OfflineDB.getAll<Repayment>('repayments');
+
+        setExpenseEvents(cachedEvents);
+        setExpenseParticipants(cachedParticipants);
+        setExpenseSplits(cachedSplits);
+        setRepayments(cachedRepayments);
+      }
+    } catch (error) {
+      console.error('Error loading expense data:', error);
+      const cachedEvents = await OfflineDB.getAll<ExpenseEvent>('expense_events');
+      const cachedParticipants = await OfflineDB.getAll<ExpenseParticipant>('expense_participants');
+      const cachedSplits = await OfflineDB.getAll<ExpenseSplit>('expense_splits');
+      const cachedRepayments = await OfflineDB.getAll<Repayment>('repayments');
+
+      setExpenseEvents(cachedEvents);
+      setExpenseParticipants(cachedParticipants);
+      setExpenseSplits(cachedSplits);
+      setRepayments(cachedRepayments);
+    }
+  }, [user]);
+
+  loadExpenseDataRef.current = loadExpenseData;
+
   // Initialize data: Load offline first, then fetch fresh in background
   useEffect(() => {
     if (user) {
       const initData = async () => {
         try {
-          const [cachedCats, cachedTxs, cachedBudgets, cachedDebts, cachedGifts] = await Promise.all([
+          const [cachedCats, cachedTxs, cachedBudgets, cachedDebts, cachedGifts, cachedEvts, cachedPars, cachedSplits, cachedReps] = await Promise.all([
             OfflineDB.getAll<Category>('categories'),
             OfflineDB.getAll<Transaction>('transactions'),
             OfflineDB.getAll<Budget>('budgets'),
             OfflineDB.getAll<Debt>('debts'),
             OfflineDB.getAll<GiftRecord>('gift_records'),
+            OfflineDB.getAll<ExpenseEvent>('expense_events'),
+            OfflineDB.getAll<ExpenseParticipant>('expense_participants'),
+            OfflineDB.getAll<ExpenseSplit>('expense_splits'),
+            OfflineDB.getAll<Repayment>('repayments'),
           ]);
 
           if (cachedCats && cachedCats.length > 0) setCategories(cachedCats);
@@ -531,6 +667,10 @@ export function useFinancialData(user: User | null) {
           if (cachedBudgets && cachedBudgets.length > 0) setBudgets(cachedBudgets);
           if (cachedDebts && cachedDebts.length > 0) setDebts(cachedDebts);
           if (cachedGifts && cachedGifts.length > 0) setGifts(cachedGifts);
+          if (cachedEvts && cachedEvts.length > 0) setExpenseEvents(cachedEvts);
+          if (cachedPars && cachedPars.length > 0) setExpenseParticipants(cachedPars);
+          if (cachedSplits && cachedSplits.length > 0) setExpenseSplits(cachedSplits);
+          if (cachedReps && cachedReps.length > 0) setRepayments(cachedReps);
 
           setIsLoading(false);
 
@@ -541,6 +681,7 @@ export function useFinancialData(user: User | null) {
               loadBudgetsRef.current ? loadBudgetsRef.current() : Promise.resolve(),
               loadDebtsRef.current ? loadDebtsRef.current() : Promise.resolve(),
               loadGiftsRef.current ? loadGiftsRef.current() : Promise.resolve(),
+              loadExpenseDataRef.current ? loadExpenseDataRef.current() : Promise.resolve(),
             ]).catch(err => console.error('Failed to reload fresh data in background:', err));
           }
         } catch (err) {
@@ -558,6 +699,10 @@ export function useFinancialData(user: User | null) {
       setBudgets([]);
       setDebts([]);
       setGifts([]);
+      setExpenseEvents([]);
+      setExpenseParticipants([]);
+      setExpenseSplits([]);
+      setRepayments([]);
       setIsLoading(false);
     }
   }, [user, refreshPendingCount]);
@@ -1034,6 +1179,349 @@ export function useFinancialData(user: User | null) {
     }
   }, [user, refreshPendingCount]);
 
+  const handleAddExpenseEvent = useCallback(async (
+    eventData: Omit<ExpenseEvent, 'id' | 'user_id' | 'status'>,
+    participantsInput: Omit<ExpenseParticipant, 'id' | 'event_id'>[],
+    splitsInput: { participantIndex: number; amountDue: number }[],
+    ownerCategory?: string
+  ) => {
+    if (!user) return;
+
+    const eventId = `temp_evt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    
+    // Create participants with correct ID and event_id
+    const localParticipants: ExpenseParticipant[] = participantsInput.map((p, idx) => ({
+      id: `temp_par_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
+      event_id: eventId,
+      display_name: p.display_name,
+      phone_number: p.phone_number,
+      is_owner: p.is_owner,
+      note: p.note
+    }));
+
+    // Create splits with correct participant_id
+    const localSplits: ExpenseSplit[] = splitsInput.map((s, idx) => {
+      const p = localParticipants[s.participantIndex];
+      return {
+        id: `temp_spl_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
+        event_id: eventId,
+        participant_id: p.id,
+        amount_due: s.amountDue
+      };
+    });
+
+    // Find owner split
+    const ownerParticipant = localParticipants.find(p => p.is_owner);
+    const ownerSplit = ownerParticipant ? localSplits.find(s => s.participant_id === ownerParticipant.id) : null;
+    const ownerSplitAmount = ownerSplit ? ownerSplit.amount_due : 0;
+
+    let linkedTxId: string | undefined = undefined;
+
+    if (ownerSplitAmount > 0) {
+      linkedTxId = `temp_tx_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      const personalTx: Transaction = {
+        id: linkedTxId,
+        amount: ownerSplitAmount,
+        category: ownerCategory || 'Ăn uống',
+        description: `[Chi hộ] ${eventData.title}`,
+        date: eventData.event_date,
+        type: 'EXPENSE'
+      };
+
+      // Add personal transaction
+      setTransactions(prev => [personalTx, ...prev]);
+      await OfflineDB.put('transactions', personalTx);
+
+      // Queue transaction sync
+      await SyncService.addToQueue({
+        table: 'transactions',
+        action: 'INSERT',
+        data: {
+          _tempId: linkedTxId,
+          user_id: user.id,
+          type: 'expense',
+          amount: ownerSplitAmount,
+          category: ownerCategory || 'Ăn uống',
+          description: `[Chi hộ] ${eventData.title}`,
+          transaction_date: eventData.event_date,
+          currency: 'VND'
+        }
+      });
+    }
+
+    const localEvent: ExpenseEvent = {
+      id: eventId,
+      user_id: user.id,
+      title: eventData.title,
+      event_date: eventData.event_date,
+      total_amount: eventData.total_amount,
+      split_method: eventData.split_method,
+      due_date: eventData.due_date,
+      description: eventData.description,
+      status: 'open',
+      transaction_id: linkedTxId
+    };
+
+    // Update local state
+    setExpenseEvents(prev => [localEvent, ...prev]);
+    setExpenseParticipants(prev => [...prev, ...localParticipants]);
+    setExpenseSplits(prev => [...prev, ...localSplits]);
+
+    // Save to IndexedDB
+    await OfflineDB.put('expense_events', localEvent);
+    await OfflineDB.putAll('expense_participants', localParticipants);
+    await OfflineDB.putAll('expense_splits', localSplits);
+
+    // Queue sync items
+    await SyncService.addToQueue({
+      table: 'expense_events',
+      action: 'INSERT',
+      data: {
+        _tempId: eventId,
+        user_id: user.id,
+        title: localEvent.title,
+        event_date: localEvent.event_date,
+        total_amount: localEvent.total_amount,
+        split_method: localEvent.split_method,
+        due_date: localEvent.due_date || null,
+        description: localEvent.description || null,
+        status: localEvent.status,
+        transaction_id: localEvent.transaction_id || null
+      }
+    });
+
+    for (const p of localParticipants) {
+      await SyncService.addToQueue({
+        table: 'expense_participants',
+        action: 'INSERT',
+        data: {
+          _tempId: p.id,
+          event_id: eventId,
+          display_name: p.display_name,
+          phone_number: p.phone_number || null,
+          is_owner: p.is_owner,
+          note: p.note || null
+        }
+      });
+    }
+
+    for (const s of localSplits) {
+      await SyncService.addToQueue({
+        table: 'expense_splits',
+        action: 'INSERT',
+        data: {
+          _tempId: s.id,
+          event_id: eventId,
+          participant_id: s.participant_id,
+          amount_due: s.amount_due,
+          note: s.note || null
+        }
+      });
+    }
+
+    await refreshPendingCount();
+    
+    // Background refresh if online
+    if (navigator.onLine && loadExpenseDataRef.current) {
+      loadExpenseDataRef.current().catch(err => console.error('Error reloading after add:', err));
+    }
+  }, [user, refreshPendingCount]);
+
+  const handleDeleteExpenseEvent = useCallback(async (eventId: string) => {
+    if (!user) return;
+
+    // Find the event to check for a linked transaction
+    const event = expenseEvents.find(e => e.id === eventId);
+    
+    // Delete linked transaction if it exists
+    if (event && event.transaction_id) {
+      setTransactions(prev => prev.filter(t => t.id !== event.transaction_id));
+      await OfflineDB.deleteById('transactions', event.transaction_id);
+      
+      if (!event.transaction_id.startsWith('temp_')) {
+        await SyncService.addToQueue({
+          table: 'transactions',
+          action: 'DELETE',
+          data: { id: event.transaction_id, user_id: user.id }
+        });
+      }
+    }
+
+    // Update local state
+    setExpenseEvents(prev => prev.filter(e => e.id !== eventId));
+    setExpenseParticipants(prev => prev.filter(p => p.event_id !== eventId));
+    setExpenseSplits(prev => prev.filter(s => s.event_id !== eventId));
+    setRepayments(prev => prev.filter(r => r.event_id !== eventId));
+
+    // Delete from IndexedDB
+    await OfflineDB.deleteById('expense_events', eventId);
+    
+    const remainingParticipants = expenseParticipants.filter(p => p.event_id !== eventId);
+    await OfflineDB.clearStore('expense_participants');
+    if (remainingParticipants.length > 0) await OfflineDB.putAll('expense_participants', remainingParticipants);
+
+    const remainingSplits = expenseSplits.filter(s => s.event_id !== eventId);
+    await OfflineDB.clearStore('expense_splits');
+    if (remainingSplits.length > 0) await OfflineDB.putAll('expense_splits', remainingSplits);
+
+    const remainingRepayments = repayments.filter(r => r.event_id !== eventId);
+    await OfflineDB.clearStore('repayments');
+    if (remainingRepayments.length > 0) await OfflineDB.putAll('repayments', remainingRepayments);
+
+    // Queue sync deletes
+    if (!eventId.startsWith('temp_')) {
+      await SyncService.addToQueue({
+        table: 'expense_events',
+        action: 'DELETE',
+        data: { id: eventId, user_id: user.id }
+      });
+    }
+
+    await refreshPendingCount();
+  }, [user, expenseEvents, expenseParticipants, expenseSplits, repayments, refreshPendingCount]);
+
+  const handleAddRepayment = useCallback(async (repaymentData: Omit<Repayment, 'id'>) => {
+    if (!user) return;
+
+    const tempId = `temp_rep_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const newRepayment: Repayment = {
+      id: tempId,
+      event_id: repaymentData.event_id,
+      participant_id: repaymentData.participant_id,
+      repayment_date: repaymentData.repayment_date,
+      amount: repaymentData.amount,
+      payment_method: repaymentData.payment_method,
+      reference_no: repaymentData.reference_no,
+      note: repaymentData.note
+    };
+
+    // Update local state
+    const updatedRepayments = [newRepayment, ...repayments];
+    setRepayments(updatedRepayments);
+    await OfflineDB.put('repayments', newRepayment);
+
+    // Recalculate event status
+    const event = expenseEvents.find(e => e.id === repaymentData.event_id);
+    if (event) {
+      const eParticipants = expenseParticipants.filter(p => p.event_id === event.id);
+      const eSplits = expenseSplits.filter(s => s.event_id === event.id);
+      
+      const settlements = eParticipants.map(participant => {
+        const split = eSplits.find(s => s.participant_id === participant.id);
+        const amountDue = split ? split.amount_due : 0;
+        
+        const amountPaid = updatedRepayments
+          .filter(r => r.event_id === event.id && r.participant_id === participant.id)
+          .reduce((sum, curr) => sum + curr.amount, 0);
+          
+        return {
+          isOwner: participant.is_owner,
+          amountDue,
+          amountPaid
+        };
+      });
+
+      const friendSettlements = settlements.filter(s => !s.isOwner);
+      const allFriendsPaid = friendSettlements.every(s => s.amountPaid >= s.amountDue);
+      const anyFriendPaid = friendSettlements.some(s => s.amountPaid > 0);
+
+      let newStatus: ExpenseEventStatus = 'open';
+      if (allFriendsPaid) {
+        newStatus = 'settled';
+      } else if (anyFriendPaid) {
+        newStatus = 'partial';
+      }
+
+      if (event.status !== newStatus) {
+        const updatedEvent = { ...event, status: newStatus };
+        setExpenseEvents(prev => prev.map(e => e.id === event.id ? updatedEvent : e));
+        await OfflineDB.put('expense_events', updatedEvent);
+      }
+    }
+
+    // Queue repayment insertion
+    await SyncService.addToQueue({
+      table: 'repayments',
+      action: 'INSERT',
+      data: {
+        _tempId: tempId,
+        event_id: repaymentData.event_id,
+        participant_id: repaymentData.participant_id,
+        repayment_date: repaymentData.repayment_date,
+        amount: repaymentData.amount,
+        payment_method: repaymentData.payment_method || null,
+        reference_no: repaymentData.reference_no || null,
+        note: repaymentData.note || null
+      }
+    });
+
+    await refreshPendingCount();
+
+    if (navigator.onLine && loadExpenseDataRef.current) {
+      loadExpenseDataRef.current().catch(err => console.error('Error reloading after repayment:', err));
+    }
+  }, [user, repayments, expenseEvents, expenseParticipants, expenseSplits, refreshPendingCount]);
+
+  const handleDeleteRepayment = useCallback(async (repaymentId: string) => {
+    if (!user) return;
+
+    const repaymentToDelete = repayments.find(r => r.id === repaymentId);
+    if (!repaymentToDelete) return;
+
+    const updatedRepayments = repayments.filter(r => r.id !== repaymentId);
+    setRepayments(updatedRepayments);
+    await OfflineDB.deleteById('repayments', repaymentId);
+
+    // Recalculate event status
+    const event = expenseEvents.find(e => e.id === repaymentToDelete.event_id);
+    if (event) {
+      const eParticipants = expenseParticipants.filter(p => p.event_id === event.id);
+      const eSplits = expenseSplits.filter(s => s.event_id === event.id);
+      
+      const settlements = eParticipants.map(participant => {
+        const split = eSplits.find(s => s.participant_id === participant.id);
+        const amountDue = split ? split.amount_due : 0;
+        
+        const amountPaid = updatedRepayments
+          .filter(r => r.event_id === event.id && r.participant_id === participant.id)
+          .reduce((sum, curr) => sum + curr.amount, 0);
+          
+        return {
+          isOwner: participant.is_owner,
+          amountDue,
+          amountPaid
+        };
+      });
+
+      const friendSettlements = settlements.filter(s => !s.isOwner);
+      const allFriendsPaid = friendSettlements.every(s => s.amountPaid >= s.amountDue);
+      const anyFriendPaid = friendSettlements.some(s => s.amountPaid > 0);
+
+      let newStatus: ExpenseEventStatus = 'open';
+      if (allFriendsPaid) {
+        newStatus = 'settled';
+      } else if (anyFriendPaid) {
+        newStatus = 'partial';
+      }
+
+      if (event.status !== newStatus) {
+        const updatedEvent = { ...event, status: newStatus };
+        setExpenseEvents(prev => prev.map(e => e.id === event.id ? updatedEvent : e));
+        await OfflineDB.put('expense_events', updatedEvent);
+      }
+    }
+
+    if (!repaymentId.startsWith('temp_')) {
+      await SyncService.addToQueue({
+        table: 'repayments',
+        action: 'DELETE',
+        data: { id: repaymentId }
+      });
+    }
+
+    await refreshPendingCount();
+  }, [user, repayments, expenseEvents, expenseParticipants, expenseSplits, refreshPendingCount]);
+
   const handleGetAiAdvice = useCallback(async () => {
     if (transactions.length === 0) return;
     setIsAiLoading(true);
@@ -1053,6 +1541,10 @@ export function useFinancialData(user: User | null) {
     setGifts([]);
     setBudgets([]);
     setCategories(DEFAULT_CATEGORIES);
+    setExpenseEvents([]);
+    setExpenseParticipants([]);
+    setExpenseSplits([]);
+    setRepayments([]);
     setAiAdvice(null);
   }, []);
 
@@ -1119,6 +1611,10 @@ export function useFinancialData(user: User | null) {
     categories,
     debts,
     gifts,
+    expenseEvents,
+    expenseParticipants,
+    expenseSplits,
+    repayments,
     isLoading,
     pendingSyncCount,
     aiAdvice,
@@ -1147,5 +1643,9 @@ export function useFinancialData(user: User | null) {
     handleGetAiAdvice,
     handleSync,
     clearAllData,
+    handleAddExpenseEvent,
+    handleDeleteExpenseEvent,
+    handleAddRepayment,
+    handleDeleteRepayment,
   };
 }

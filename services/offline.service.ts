@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'imoney_offline';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 const STORES = [
     'transactions',
@@ -15,6 +15,10 @@ const STORES = [
     'sync_queue',
     'auth_cache',
     'categories',
+    'expense_events',
+    'expense_participants',
+    'expense_splits',
+    'repayments',
 ] as const;
 
 export type StoreName = (typeof STORES)[number];

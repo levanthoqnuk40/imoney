@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Transaction, Budget, ViewType, Debt, GiftRecord, GiftEventType, Category } from './types';
+import { Transaction, Budget, ViewType, Debt, GiftRecord, GiftEventType, Category, ExpenseEvent, ExpenseParticipant, ExpenseSplit, Repayment } from './types';
 import StatsCard from './components/StatsCard';
 import TransactionForm from './components/TransactionForm';
 import Dashboard from './components/Dashboard';
@@ -14,6 +14,9 @@ import DebtDetail from './components/DebtDetail';
 import GiftCard from './components/GiftCard';
 import GiftForm from './components/GiftForm';
 import GiftDetail from './components/GiftDetail';
+import SharedExpenseForm from './components/SharedExpenseForm';
+import SharedExpenseDetail from './components/SharedExpenseDetail';
+import SharedExpensesList from './components/SharedExpensesList';
 import { useAuth } from './hooks/useAuth';
 import { useFinancialData } from './hooks/useFinancialData';
 import { GIFT_EVENT_TYPES, COLORS } from './constants';
@@ -50,6 +53,10 @@ const App: React.FC = () => {
     categories,
     debts,
     gifts,
+    expenseEvents,
+    expenseParticipants,
+    expenseSplits,
+    repayments,
     isLoading,
     pendingSyncCount,
     aiAdvice,
@@ -77,6 +84,10 @@ const App: React.FC = () => {
     handleCategoriesChange,
     handleGetAiAdvice,
     clearAllData,
+    handleAddExpenseEvent,
+    handleDeleteExpenseEvent,
+    handleAddRepayment,
+    handleDeleteRepayment,
   } = useFinancialData(user);
 
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
@@ -98,6 +109,10 @@ const App: React.FC = () => {
   const [isGiftFormOpen, setIsGiftFormOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<GiftRecord | null>(null);
   const [giftFilter, setGiftFilter] = useState<'all' | GiftEventType>('all');
+
+  // Shared expenses tracking state
+  const [isSharedFormOpen, setIsSharedFormOpen] = useState(false);
+  const [selectedSharedEvent, setSelectedSharedEvent] = useState<ExpenseEvent | null>(null);
 
   // Notification bell panel state
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
@@ -377,6 +392,25 @@ const App: React.FC = () => {
               </span>
             </button>
             <button
+              onClick={() => setCurrentView('shared')}
+              className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${currentView === 'shared'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+            >
+              <span className="flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                Chi hộ
+                {expenseEvents.filter(e => e.status !== 'settled').length > 0 && (
+                  <span className="bg-blue-100 text-blue-600 text-xs px-1.5 py-0.5 rounded-full font-bold">
+                    {expenseEvents.filter(e => e.status !== 'settled').length}
+                  </span>
+                )}
+              </span>
+            </button>
+            <button
               onClick={() => setCurrentView('gifts')}
               className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${currentView === 'gifts'
                 ? 'border-blue-600 text-blue-600'
@@ -409,6 +443,11 @@ const App: React.FC = () => {
             }}
             categories={categories}
             onTransactionClick={setSelectedTransaction}
+            expenseEvents={expenseEvents}
+            expenseParticipants={expenseParticipants}
+            expenseSplits={expenseSplits}
+            repayments={repayments}
+            onViewShared={() => setCurrentView('shared')}
           />
         )}
 
@@ -905,6 +944,16 @@ const App: React.FC = () => {
               )}
             </div>
           </div>
+        {/* Shared Expenses View */}
+        {currentView === 'shared' && (
+          <SharedExpensesList
+            events={expenseEvents}
+            participants={expenseParticipants}
+            splits={expenseSplits}
+            repayments={repayments}
+            onSelectEvent={setSelectedSharedEvent}
+            onOpenCreateForm={() => setIsSharedFormOpen(true)}
+          />
         )}
 
         {/* Gifts View */}
@@ -1038,6 +1087,7 @@ const App: React.FC = () => {
           onClick={() => {
             if (currentView === 'debts') setIsDebtFormOpen(true);
             else if (currentView === 'gifts') setIsGiftFormOpen(true);
+            else if (currentView === 'shared') setIsSharedFormOpen(true);
             else setIsFormOpen(true);
           }}
           className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 group"
@@ -1046,7 +1096,13 @@ const App: React.FC = () => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path>
           </svg>
           <span className="font-bold text-sm sm:text-base">
-            {currentView === 'debts' ? 'Thêm Khoản Nợ' : currentView === 'gifts' ? 'Thêm Ghi Nhớ' : 'Thêm Giao Dịch'}
+            {currentView === 'debts'
+              ? 'Thêm Khoản Nợ'
+              : currentView === 'gifts'
+              ? 'Thêm Ghi Nhớ'
+              : currentView === 'shared'
+              ? 'Thêm Chi Hộ'
+              : 'Thêm Giao Dịch'}
           </span>
         </button>
       </div>
@@ -1091,12 +1147,34 @@ const App: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setCurrentView('shared')}
+            className="flex flex-col items-center justify-center flex-1 py-1 relative"
+          >
+            <div className={`flex items-center justify-center w-12 h-7 rounded-full transition-all ${
+              currentView === 'shared' ? 'bg-blue-50 text-blue-600 scale-105' : 'text-gray-400'
+            }`}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              {expenseEvents.filter(e => e.status !== 'settled').length > 0 && (
+                <span className="absolute top-1 right-2 w-2 h-2 bg-rose-500 rounded-full"></span>
+              )}
+            </div>
+            <span className={`text-[10px] mt-1 transition-all ${
+              currentView === 'shared' ? 'text-blue-600 font-bold' : 'text-gray-400 font-medium'
+            }`}>
+              Chi hộ
+            </span>
+          </button>
+
+          <button
             onClick={() => {
               if (currentView === 'debts') setIsDebtFormOpen(true);
               else if (currentView === 'gifts') setIsGiftFormOpen(true);
+              else if (currentView === 'shared') setIsSharedFormOpen(true);
               else setIsFormOpen(true);
             }}
-            className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-full shadow-lg shadow-blue-500/30 -mt-5 text-white active:scale-95 transition-transform"
+            className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-full shadow-lg shadow-blue-500/30 -mt-5 text-white active:scale-95 transition-transform flex-shrink-0"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path>
@@ -1219,6 +1297,28 @@ const App: React.FC = () => {
           allGifts={gifts}
           onClose={() => setSelectedGift(null)}
           onDelete={handleDeleteGift}
+        />
+      )}
+
+      {/* Shared Expense Form Modal */}
+      {isSharedFormOpen && (
+        <SharedExpenseForm
+          onSubmit={handleAddExpenseEvent}
+          onClose={() => setIsSharedFormOpen(false)}
+          categories={categories}
+        />
+      )}
+
+      {/* Shared Expense Detail Modal */}
+      {selectedSharedEvent && (
+        <SharedExpenseDetail
+          event={selectedSharedEvent}
+          participants={expenseParticipants}
+          splits={expenseSplits}
+          repayments={repayments}
+          onClose={() => setSelectedSharedEvent(null)}
+          onAddRepayment={handleAddRepayment}
+          onDeleteRepayment={handleDeleteRepayment}
         />
       )}
     </div>

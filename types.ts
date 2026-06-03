@@ -96,7 +96,7 @@ export interface GiftRecord {
 }
 
 // View types cho navigation
-export type ViewType = 'dashboard' | 'transactions' | 'debts' | 'gifts';
+export type ViewType = 'dashboard' | 'transactions' | 'debts' | 'gifts' | 'shared';
 
 // ============================================
 // SUPABASE PAYLOAD SCHEMAS FOR SYNC
@@ -214,6 +214,106 @@ export type SupabaseDebtPaymentDelete = {
   id: string;
 };
 
+// ============================================
+// SHARED EXPENSES / REPAYMENTS TRACKING TYPES
+// ============================================
+
+export type ExpenseEventStatus = 'open' | 'partial' | 'settled';
+
+export interface ExpenseEvent {
+  id: string;
+  user_id: string;
+  title: string;
+  event_date: string;
+  total_amount: number;
+  split_method: 'equal' | 'custom';
+  due_date?: string;
+  description?: string;
+  status: ExpenseEventStatus;
+  transaction_id?: string; // links to transaction of owner's personal share
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ExpenseParticipant {
+  id: string;
+  event_id: string;
+  display_name: string;
+  phone_number?: string;
+  is_owner: boolean;
+  note?: string;
+}
+
+export interface ExpenseSplit {
+  id: string;
+  event_id: string;
+  participant_id: string;
+  amount_due: number;
+  note?: string;
+}
+
+export interface Repayment {
+  id: string;
+  event_id: string;
+  participant_id: string;
+  repayment_date: string;
+  amount: number;
+  payment_method?: string; // 'cash' | 'transfer' | etc.
+  reference_no?: string;
+  note?: string;
+  created_at?: string;
+}
+
+export interface ParticipantSettlementState {
+  participant: ExpenseParticipant;
+  amountDue: number;
+  amountPaid: number;
+  amountRemaining: number;
+  status: 'unpaid' | 'partial' | 'paid';
+}
+
+// Supabase synchronization payload schemas for shared expenses
+export type SupabaseExpenseEventInsert = {
+  _tempId?: string;
+  user_id: string;
+  title: string;
+  event_date: string;
+  total_amount: number;
+  split_method: 'equal' | 'custom';
+  due_date?: string | null;
+  description?: string | null;
+  status: ExpenseEventStatus;
+  transaction_id?: string | null;
+};
+
+export type SupabaseExpenseParticipantInsert = {
+  _tempId?: string;
+  event_id: string;
+  display_name: string;
+  phone_number?: string | null;
+  is_owner: boolean;
+  note?: string | null;
+};
+
+export type SupabaseExpenseSplitInsert = {
+  _tempId?: string;
+  event_id: string;
+  participant_id: string;
+  amount_due: number;
+  note?: string | null;
+};
+
+export type SupabaseRepaymentInsert = {
+  _tempId?: string;
+  event_id: string;
+  participant_id: string;
+  repayment_date: string;
+  amount: number;
+  payment_method?: string | null;
+  reference_no?: string | null;
+  note?: string | null;
+};
+
 export type SyncPayload =
   | { table: 'transactions'; action: 'INSERT'; data: SupabaseTransactionInsert }
   | { table: 'transactions'; action: 'UPDATE'; data: SupabaseTransactionUpdate }
@@ -228,5 +328,11 @@ export type SyncPayload =
   | { table: 'categories'; action: 'INSERT' | 'UPDATE'; data: SupabaseCategoryInsert }
   | { table: 'categories'; action: 'DELETE'; data: SupabaseCategoryDelete }
   | { table: 'debt_payments'; action: 'INSERT'; data: SupabaseDebtPaymentInsert }
-  | { table: 'debt_payments'; action: 'DELETE'; data: SupabaseDebtPaymentDelete };
+  | { table: 'debt_payments'; action: 'DELETE'; data: SupabaseDebtPaymentDelete }
+  | { table: 'expense_events'; action: 'INSERT'; data: SupabaseExpenseEventInsert }
+  | { table: 'expense_events'; action: 'DELETE'; data: { id: string; user_id: string } }
+  | { table: 'expense_participants'; action: 'INSERT'; data: SupabaseExpenseParticipantInsert }
+  | { table: 'expense_splits'; action: 'INSERT'; data: SupabaseExpenseSplitInsert }
+  | { table: 'repayments'; action: 'INSERT'; data: SupabaseRepaymentInsert }
+  | { table: 'repayments'; action: 'DELETE'; data: { id: string } };
 

@@ -1,10 +1,11 @@
 
 import React, { useMemo, useState } from 'react';
-import { Transaction, Budget, Category } from '../types';
+import { Transaction, Budget, Category, ExpenseEvent, ExpenseParticipant, ExpenseSplit, Repayment } from '../types';
 import { COLORS } from '../constants';
 import BudgetCard from './BudgetCard';
 import TransactionListModal from './TransactionListModal';
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, AreaChart, Area, BarChart, Bar, LabelList } from 'recharts';
+import { getEventRepaymentProgress } from '../services/sharedExpense.service';
 
 interface DashboardProps {
     transactions: Transaction[];
@@ -13,9 +14,26 @@ interface DashboardProps {
     onMonthClick?: (yearMonth: string) => void;
     categories: Category[];
     onTransactionClick?: (transaction: Transaction) => void;
+    expenseEvents: ExpenseEvent[];
+    expenseParticipants: ExpenseParticipant[];
+    expenseSplits: ExpenseSplit[];
+    repayments: Repayment[];
+    onViewShared?: () => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudget, onMonthClick, categories, onTransactionClick }) => {
+const Dashboard: React.FC<DashboardProps> = ({
+    transactions,
+    budgets,
+    onEditBudget,
+    onMonthClick,
+    categories,
+    onTransactionClick,
+    expenseEvents,
+    expenseParticipants,
+    expenseSplits,
+    repayments,
+    onViewShared
+}) => {
     const [activeFilter, setActiveFilter] = useState<{
         type: 'category' | 'rule';
         value: string;
@@ -208,6 +226,24 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
         };
     }, [monthlyTransactions, totals.income]);
 
+    const sharedStats = useMemo(() => {
+        let totalReceivableRemaining = 0;
+        let activeEventsCount = 0;
+        
+        expenseEvents.forEach(event => {
+            if (event.status !== 'settled') {
+                activeEventsCount++;
+                const progress = getEventRepaymentProgress(event, expenseParticipants, expenseSplits, repayments);
+                totalReceivableRemaining += progress.receivableRemaining;
+            }
+        });
+
+        return {
+            totalReceivableRemaining,
+            activeEventsCount
+        };
+    }, [expenseEvents, expenseParticipants, expenseSplits, repayments]);
+
     return (
         <div className="space-y-6">
             {/* Summary Cards Row */}
@@ -229,6 +265,49 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                     <p className={`text-lg sm:text-xl font-bold ${weeklyComparison.change > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                         {weeklyComparison.change > 0 ? '+' : ''}{weeklyComparison.change.toFixed(0)}%
                     </p>
+                </div>
+            </div>
+
+            {/* Shared Expenses Summary Widget */}
+            <div
+                onClick={onViewShared}
+                className="card p-4 sm:p-5 bg-gradient-to-br from-indigo-50 via-blue-50 to-emerald-50/50 border border-indigo-100 hover:border-indigo-300 shadow-sm transition-all cursor-pointer group"
+            >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-lg font-bold group-hover:scale-110 transition-transform flex-shrink-0">
+                            👥
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <h3 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+                                Theo dõi hoàn trả chi hộ
+                                <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">
+                                    Mới
+                                </span>
+                            </h3>
+                            <p className="text-xs text-gray-500 mt-0.5 truncate">
+                                {expenseEvents.length === 0
+                                    ? "Tự động phân chia chi tiêu và nhắc nhở bạn bè trả tiền khi ăn uống, du lịch nhóm."
+                                    : `Bạn có ${sharedStats.activeEventsCount} sự kiện chi hộ chưa chốt với bạn bè.`}
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-4 sm:gap-6 self-end sm:self-center flex-shrink-0">
+                        {expenseEvents.length > 0 && (
+                            <div className="text-right">
+                                <span className="text-[10px] text-gray-400 block font-medium uppercase tracking-wider">Còn Phải Thu</span>
+                                <span className="text-base sm:text-lg font-black text-rose-600">
+                                    {sharedStats.totalReceivableRemaining.toLocaleString('vi-VN')}đ
+                                </span>
+                            </div>
+                        )}
+                        <span className="flex items-center text-xs font-bold text-indigo-600 group-hover:text-indigo-800 transition-colors">
+                            {expenseEvents.length === 0 ? "Bắt đầu sử dụng" : "Quản lý chi hộ"}
+                            <svg className="w-4 h-4 ml-1 transform group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                            </svg>
+                        </span>
+                    </div>
                 </div>
             </div>
 
