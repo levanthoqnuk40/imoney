@@ -944,6 +944,8 @@ const App: React.FC = () => {
               )}
             </div>
           </div>
+        )}
+
         {/* Shared Expenses View */}
         {currentView === 'shared' && (
           <SharedExpensesList
