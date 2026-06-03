@@ -1,18 +1,19 @@
 
 import React, { useState } from 'react';
 import { Transaction } from '../types';
-import { CATEGORY_ICONS } from '../constants';
+import { CATEGORY_ICONS, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../constants';
 
 interface TransactionDetailProps {
     transaction: Transaction;
     onClose: () => void;
     onDelete: (id: string) => void;
-    onUpdateDescription: (id: string, description: string) => Promise<void>;
+    onUpdateTransaction: (id: string, description: string, category?: string) => Promise<void>;
 }
 
-const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onClose, onDelete, onUpdateDescription }) => {
+const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onClose, onDelete, onUpdateTransaction }) => {
     const [isEditing, setIsEditing] = useState(false);
     const [editedDescription, setEditedDescription] = useState(transaction.description || '');
+    const [editedCategory, setEditedCategory] = useState(transaction.category);
     const [isSaving, setIsSaving] = useState(false);
 
     const handleDelete = () => {
@@ -25,10 +26,10 @@ const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onCl
     const handleSave = async () => {
         setIsSaving(true);
         try {
-            await onUpdateDescription(transaction.id, editedDescription);
+            await onUpdateTransaction(transaction.id, editedDescription, editedCategory);
             setIsEditing(false);
         } catch (error) {
-            console.error('Error updating description:', error);
+            console.error('Error updating transaction:', error);
         } finally {
             setIsSaving(false);
         }
@@ -36,6 +37,7 @@ const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onCl
 
     const handleCancel = () => {
         setEditedDescription(transaction.description || '');
+        setEditedCategory(transaction.category);
         setIsEditing(false);
     };
 
@@ -77,10 +79,22 @@ const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onCl
                         {/* Category */}
                         <div className="flex items-center justify-between py-3 border-b border-gray-100">
                             <span className="text-gray-500">Danh mục</span>
-                            <span className="font-medium text-gray-800 flex items-center gap-2">
-                                <span>{CATEGORY_ICONS[transaction.category] || '📦'}</span>
-                                {transaction.category}
-                            </span>
+                            {isEditing ? (
+                                <select
+                                    value={editedCategory}
+                                    onChange={(e) => setEditedCategory(e.target.value)}
+                                    className="px-3 py-1.5 border border-gray-200 rounded-lg text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent bg-white"
+                                >
+                                    {(transaction.type === 'INCOME' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <span className="font-medium text-gray-800 flex items-center gap-2">
+                                    <span>{CATEGORY_ICONS[transaction.category] || '📦'}</span>
+                                    {transaction.category}
+                                </span>
+                            )}
                         </div>
 
                         {/* Date */}

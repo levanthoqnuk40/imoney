@@ -16,7 +16,7 @@ import GiftDetail from './components/GiftDetail';
 import { getFinancialAdvice } from './services/geminiService';
 import { supabase } from './services/supabase.service';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
-import { COLORS, GIFT_EVENT_TYPES } from './constants';
+import { COLORS, GIFT_EVENT_TYPES, autoCategorize } from './constants';
 import { User } from '@supabase/supabase-js';
 import * as OfflineDB from './services/offline.service';
 import * as SyncService from './services/sync.service';
@@ -154,6 +154,38 @@ const App: React.FC = () => {
     setBudgets([]);
   };
 
+  // Helper to run auto-categorization on a list of transactions
+  const autoCategorizeTransactions = useCallback(async (rawTxList: Transaction[], updateDb: boolean) => {
+    return Promise.all(rawTxList.map(async t => {
+      let category = t.category;
+      if (category === 'Chuyển khoản đi' || category === 'Chuyển khoản nhận' || category === 'Khác') {
+        const autoCat = autoCategorize(t.description);
+        if (autoCat && autoCat.type === t.type) {
+          category = autoCat.category;
+          if (updateDb && !t.id.startsWith('temp_')) {
+            // Update Supabase in background
+            if (navigator.onLine) {
+              supabase
+                .from('transactions')
+                .update({ category })
+                .eq('id', t.id)
+                .then(({ error }) => {
+                  if (error) console.error('Error auto-updating category in DB:', error);
+                });
+            }
+            // Update IndexedDB in background
+            OfflineDB.getById<Transaction>('transactions', t.id).then(cached => {
+              if (cached) {
+                OfflineDB.put('transactions', { ...cached, category });
+              }
+            });
+          }
+        }
+      }
+      return { ...t, category };
+    }));
+  }, []);
+
   // Load transactions — online: fetch from Supabase + cache; offline: read IndexedDB
   const loadTransactions = useCallback(async () => {
     if (!user) return;
@@ -179,16 +211,18 @@ const App: React.FC = () => {
           receipt_url: t.receipt_url || undefined
         }));
 
-        setTransactions(mappedTransactions);
+        const processed = await autoCategorizeTransactions(mappedTransactions, true);
+        setTransactions(processed);
         // Cache to IndexedDB
         await OfflineDB.clearStore('transactions');
-        await OfflineDB.putAll('transactions', mappedTransactions);
+        await OfflineDB.putAll('transactions', processed);
       } else {
         // Offline: load from IndexedDB
         const cached = await OfflineDB.getAll<Transaction>('transactions');
         // Sort by date descending (same as Supabase order)
         cached.sort((a, b) => b.date.localeCompare(a.date));
-        setTransactions(cached);
+        const processed = await autoCategorizeTransactions(cached, false);
+        setTransactions(processed);
       }
     } catch (error) {
       console.error('Error loading transactions:', error);
@@ -245,7 +279,22 @@ const App: React.FC = () => {
               type: t.type === 'income' ? 'INCOME' : 'EXPENSE',
               receipt_url: t.receipt_url || undefined,
             };
-            setTransactions((prev) => [newTx, ...prev]);
+            
+            // Run auto categorization on the new transaction
+            let category = newTx.category;
+            if (category === 'Chuyển khoản đi' || category === 'Chuyển khoản nhận' || category === 'Khác') {
+              const autoCat = autoCategorize(newTx.description);
+              if (autoCat && autoCat.type === newTx.type) {
+                category = autoCat.category;
+                // Update Supabase and IndexedDB in background
+                supabase.from('transactions').update({ category }).eq('id', newTx.id).then(({ error }) => {
+                  if (error) console.error('Error auto-updating realtime category in DB:', error);
+                });
+                OfflineDB.put('transactions', { ...newTx, category }).then();
+              }
+            }
+            
+            setTransactions((prev) => [{ ...newTx, category }, ...prev]);
           }
         }
       )
@@ -390,38 +439,61 @@ const App: React.FC = () => {
     }
   };
 
-  // Update transaction description
-  const handleUpdateDescription = async (id: string, description: string) => {
+  // Update transaction description and/or category
+  const handleUpdateTransaction = async (id: string, description: string, category?: string) => {
     if (!user) return;
+
+    let targetCategory = category;
+    const currentTx = transactions.find(t => t.id === id);
+    
+    // Auto-categorize if no manual category is provided and the description changed
+    if (!targetCategory && currentTx) {
+      const isDefaultCat = currentTx.category === 'Chuyển khoản đi' || currentTx.category === 'Chuyển khoản nhận' || currentTx.category === 'Khác';
+      if (isDefaultCat) {
+        const autoCat = autoCategorize(description);
+        if (autoCat && autoCat.type === currentTx.type) {
+          targetCategory = autoCat.category;
+        }
+      }
+    }
+
+    // Fallback to existing category if still not set
+    if (!targetCategory && currentTx) {
+      targetCategory = currentTx.category;
+    }
+
+    const finalCategory = targetCategory || 'Khác';
 
     // Optimistic update UI + IndexedDB
     setTransactions(prev => prev.map(t =>
-      t.id === id ? { ...t, description } : t
+      t.id === id ? { ...t, description, category: finalCategory } : t
     ));
     if (selectedTransaction?.id === id) {
-      setSelectedTransaction({ ...selectedTransaction, description });
+      setSelectedTransaction({ ...selectedTransaction, description, category: finalCategory });
     }
 
     const existing = await OfflineDB.getById<Transaction>('transactions', id);
     if (existing) {
-      await OfflineDB.put('transactions', { ...existing, description });
+      await OfflineDB.put('transactions', { ...existing, description, category: finalCategory });
     }
+
+    const updatePayload: Record<string, any> = { description, category: finalCategory };
 
     if (navigator.onLine && !id.startsWith('temp_')) {
       try {
         const { error } = await supabase
           .from('transactions')
-          .update({ description })
+          .update(updatePayload)
           .eq('id', id)
           .eq('user_id', user.id);
         if (error) throw error;
       } catch (error) {
         console.error('Online update failed, queuing:', error);
-        await SyncService.addToQueue({ table: 'transactions', action: 'UPDATE', data: { id, user_id: user.id, description } });
+        await SyncService.addToQueue({ table: 'transactions', action: 'UPDATE', data: { id, user_id: user.id, ...updatePayload } });
         await refreshPendingCount();
       }
     } else if (!id.startsWith('temp_')) {
-      await SyncService.addToQueue({ table: 'transactions', action: 'UPDATE', data: { id, user_id: user.id, description } });
+      await SyncService.addToQueue({ table: 'transactions', action: 'UPDATE', data: { id, user_id: user.id, ...updatePayload } });
       await refreshPendingCount();
     }
   };
@@ -1744,7 +1816,7 @@ const App: React.FC = () => {
           transaction={selectedTransaction}
           onClose={() => setSelectedTransaction(null)}
           onDelete={handleDeleteTransaction}
-          onUpdateDescription={handleUpdateDescription}
+          onUpdateTransaction={handleUpdateTransaction}
         />
       )}
 
