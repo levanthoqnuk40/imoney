@@ -6,9 +6,10 @@ interface BudgetCardProps {
     spent: number;
     limit: number;
     icon: string;
+    onClick?: () => void;
 }
 
-const BudgetCard: React.FC<BudgetCardProps> = ({ category, spent, limit, icon }) => {
+const BudgetCard: React.FC<BudgetCardProps> = ({ category, spent, limit, icon, onClick }) => {
     const percentage = Math.min((spent / limit) * 100, 100);
     const remaining = limit - spent;
 
@@ -25,7 +26,10 @@ const BudgetCard: React.FC<BudgetCardProps> = ({ category, spent, limit, icon })
     };
 
     return (
-        <div className="card p-4 sm:p-5 hover:shadow-md transition-shadow">
+        <div 
+            onClick={onClick}
+            className={`card p-4 sm:p-5 hover:shadow-md transition-all ${onClick ? 'cursor-pointer hover:bg-gray-50/40 hover:border-gray-300' : ''}`}
+        >
             <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3">
                     <span className="text-2xl">{icon}</span>

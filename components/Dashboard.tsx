@@ -1,8 +1,9 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Transaction, Budget, Category } from '../types';
 import { COLORS } from '../constants';
 import BudgetCard from './BudgetCard';
+import TransactionListModal from './TransactionListModal';
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, AreaChart, Area, BarChart, Bar, LabelList } from 'recharts';
 
 interface DashboardProps {
@@ -11,9 +12,16 @@ interface DashboardProps {
     onEditBudget: () => void;
     onMonthClick?: (yearMonth: string) => void;
     categories: Category[];
+    onTransactionClick?: (transaction: Transaction) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudget, onMonthClick, categories }) => {
+const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudget, onMonthClick, categories, onTransactionClick }) => {
+    const [activeFilter, setActiveFilter] = useState<{
+        type: 'category' | 'rule';
+        value: string;
+        title: string;
+    } | null>(null);
+
     // Get current month transactions
     const { currentMonth, currentYear } = useMemo(() => ({
         currentMonth: new Date().getMonth(),
@@ -26,6 +34,27 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
             return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
         });
     }, [transactions, currentMonth, currentYear]);
+
+    const filteredTransactions = useMemo(() => {
+        if (!activeFilter) return [];
+        if (activeFilter.type === 'category') {
+            return monthlyTransactions.filter(t => t.category === activeFilter.value);
+        } else {
+            const needCategoryIds = ['cat_nhao', 'cat_anuong', 'cat_dichuyen', 'cat_suckhoe', 'cat_giaoduc'];
+            const needCategoryNames = categories
+                .filter(c => needCategoryIds.includes(c.id))
+                .map(c => c.name);
+
+            if (activeFilter.value === 'needs') {
+                return monthlyTransactions.filter(t => t.type === 'EXPENSE' && needCategoryNames.includes(t.category));
+            } else if (activeFilter.value === 'wants') {
+                return monthlyTransactions.filter(t => t.type === 'EXPENSE' && !needCategoryNames.includes(t.category));
+            } else {
+                // savings: show income transactions
+                return monthlyTransactions.filter(t => t.type === 'INCOME');
+            }
+        }
+    }, [activeFilter, monthlyTransactions, categories]);
 
     // Calculate spending by category for current month
     const categorySpending = useMemo(() => {
@@ -288,7 +317,10 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         {/* 50% Needs */}
-                        <div className="bg-white rounded-2xl p-4 border border-slate-100 flex flex-col justify-between shadow-sm">
+                        <button
+                            onClick={() => setActiveFilter({ type: 'rule', value: 'needs', title: 'Danh sách chi tiêu Thiết yếu (Needs)' })}
+                            className="bg-white rounded-2xl p-4 border border-slate-100 flex flex-col text-left justify-between shadow-sm hover:bg-blue-50/20 hover:border-blue-100 transition-all cursor-pointer focus:outline-none"
+                        >
                             <div>
                                 <div className="flex justify-between items-start mb-2">
                                     <div>
@@ -319,7 +351,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                     </p>
                                 </div>
                             </div>
-                            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+                            <div className="w-full mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
                                 <span className="text-[10px] text-slate-500 font-medium">Trạng thái:</span>
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                     rule503020.needsPercent <= 50 
@@ -329,10 +361,13 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                     {rule503020.needsPercent <= 50 ? '✓ Tốt' : '⚠ Cần tối ưu'}
                                 </span>
                             </div>
-                        </div>
+                        </button>
 
                         {/* 30% Wants */}
-                        <div className="bg-white rounded-2xl p-4 border border-slate-100 flex flex-col justify-between shadow-sm">
+                        <button
+                            onClick={() => setActiveFilter({ type: 'rule', value: 'wants', title: 'Danh sách chi tiêu Sở thích (Wants)' })}
+                            className="bg-white rounded-2xl p-4 border border-slate-100 flex flex-col text-left justify-between shadow-sm hover:bg-amber-50/20 hover:border-amber-100 transition-all cursor-pointer focus:outline-none"
+                        >
                             <div>
                                 <div className="flex justify-between items-start mb-2">
                                     <div>
@@ -363,7 +398,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                     </p>
                                 </div>
                             </div>
-                            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+                            <div className="w-full mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
                                 <span className="text-[10px] text-slate-500 font-medium">Trạng thái:</span>
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                     rule503020.wantsPercent <= 30 
@@ -373,10 +408,13 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                     {rule503020.wantsPercent <= 30 ? '✓ Tốt' : '⚠ Vượt chi tiêu'}
                                 </span>
                             </div>
-                        </div>
+                        </button>
 
                         {/* 20% Savings */}
-                        <div className="bg-white rounded-2xl p-4 border border-slate-100 flex flex-col justify-between shadow-sm">
+                        <button
+                            onClick={() => setActiveFilter({ type: 'rule', value: 'savings', title: 'Danh sách khoản Thu nhập & Tích lũy (Savings)' })}
+                            className="bg-white rounded-2xl p-4 border border-slate-100 flex flex-col text-left justify-between shadow-sm hover:bg-emerald-50/20 hover:border-emerald-100 transition-all cursor-pointer focus:outline-none"
+                        >
                             <div>
                                 <div className="flex justify-between items-start mb-2">
                                     <div>
@@ -407,7 +445,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                     </div>
                                 </div>
                             </div>
-                            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+                            <div className="w-full mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
                                 <span className="text-[10px] text-slate-500 font-medium">Trạng thái:</span>
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                     rule503020.savingsPercent >= 20 
@@ -417,7 +455,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                     {rule503020.savingsPercent >= 20 ? '✓ Đạt chỉ tiêu' : '⚠ Cần tăng tích lũy'}
                                 </span>
                             </div>
-                        </div>
+                        </button>
                     </div>
                 )}
             </div>
@@ -446,6 +484,11 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                 spent={categorySpending[budget.category] || 0}
                                 limit={budget.limit}
                                 icon={categories.find(c => c.name === budget.category)?.icon || '📦'}
+                                onClick={() => setActiveFilter({
+                                    type: 'category',
+                                    value: budget.category,
+                                    title: `Danh sách chi tiêu: ${budget.category}`
+                                })}
                             />
                         ))}
                     </div>
@@ -513,6 +556,16 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                         dataKey="value"
                                         label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                                         labelLine={false}
+                                        onClick={(data) => {
+                                            if (data && data.name) {
+                                                setActiveFilter({
+                                                    type: 'category',
+                                                    value: data.name,
+                                                    title: `Danh sách chi tiêu: ${data.name}`
+                                                });
+                                            }
+                                        }}
+                                        style={{ cursor: 'pointer' }}
                                     >
                                         {pieData.map((entry, index) => (
                                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -536,7 +589,15 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                     <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-4">Top chi tiêu tháng này</h3>
                     <div className="space-y-3">
                         {pieData.slice(0, 5).map((cat, idx) => (
-                            <div key={cat.name} className="flex items-center gap-3">
+                            <button
+                                key={cat.name}
+                                onClick={() => setActiveFilter({
+                                    type: 'category',
+                                    value: cat.name,
+                                    title: `Danh sách chi tiêu: ${cat.name}`
+                                })}
+                                className="w-full text-left flex items-center gap-3 hover:bg-gray-50/60 p-2 rounded-xl transition-all cursor-pointer focus:outline-none"
+                            >
                                 <span className="text-xl">{categories.find(c => c.name === cat.name)?.icon || '📦'}</span>
                                 <div className="flex-1 min-w-0">
                                     <div className="flex justify-between items-center mb-1">
@@ -553,10 +614,20 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                         />
                                     </div>
                                 </div>
-                            </div>
+                            </button>
                         ))}
                     </div>
                 </div>
+            )}
+
+            {activeFilter && (
+                <TransactionListModal
+                    title={activeFilter.title}
+                    transactions={filteredTransactions}
+                    categories={categories}
+                    onClose={() => setActiveFilter(null)}
+                    onTransactionClick={onTransactionClick || (() => {})}
+                />
             )}
         </div>
     );

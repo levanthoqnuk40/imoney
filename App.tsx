@@ -1501,6 +1501,7 @@ const App: React.FC = () => {
               setCurrentView('transactions');
             }}
             categories={categories}
+            onTransactionClick={setSelectedTransaction}
           />
         )}
 
