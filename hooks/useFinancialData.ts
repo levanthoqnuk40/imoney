@@ -1249,13 +1249,14 @@ export function useFinancialData(user: User | null) {
   }, [user, refreshPendingCount]);
 
   const handleAddExpenseEvent = useCallback(async (
-    eventData: Omit<ExpenseEvent, 'id' | 'user_id' | 'status'>,
+    eventData: Omit<ExpenseEvent, 'id' | 'user_id' | 'status'> & { receiptFile?: File | null; receiptPreview?: string | null },
     participantsInput: Omit<ExpenseParticipant, 'id' | 'event_id'>[],
     splitsInput: { participantIndex: number; amountDue: number }[],
     ownerCategory?: string
   ) => {
     if (!user) return;
 
+    const { receiptFile, receiptPreview, ...eventFields } = eventData;
     const eventId = generateUUID();
     
     // Create participants with correct ID and event_id
@@ -1292,8 +1293,8 @@ export function useFinancialData(user: User | null) {
         id: linkedTxId,
         amount: ownerSplitAmount,
         category: ownerCategory || 'Ăn uống',
-        description: `[Chi hộ] ${eventData.title}`,
-        date: eventData.event_date,
+        description: `[Chi hộ] ${eventFields.title}`,
+        date: eventFields.event_date,
         type: 'EXPENSE'
       };
 
@@ -1312,8 +1313,8 @@ export function useFinancialData(user: User | null) {
           type: 'expense',
           amount: ownerSplitAmount,
           category: ownerCategory || 'Ăn uống',
-          description: `[Chi hộ] ${eventData.title}`,
-          transaction_date: eventData.event_date,
+          description: `[Chi hộ] ${eventFields.title}`,
+          transaction_date: eventFields.event_date,
           currency: 'VND'
         }
       });
@@ -1322,14 +1323,15 @@ export function useFinancialData(user: User | null) {
     const localEvent: ExpenseEvent = {
       id: eventId,
       user_id: user.id,
-      title: eventData.title,
-      event_date: eventData.event_date,
-      total_amount: eventData.total_amount,
-      split_method: eventData.split_method,
-      due_date: eventData.due_date,
-      description: eventData.description,
+      title: eventFields.title,
+      event_date: eventFields.event_date,
+      total_amount: eventFields.total_amount,
+      split_method: eventFields.split_method,
+      due_date: eventFields.due_date,
+      description: eventFields.description,
       status: 'open',
-      transaction_id: linkedTxId
+      transaction_id: linkedTxId,
+      receipt_url: receiptPreview || undefined
     };
 
     // Update local state
@@ -1357,8 +1359,11 @@ export function useFinancialData(user: User | null) {
         due_date: localEvent.due_date || null,
         description: localEvent.description || null,
         status: localEvent.status,
-        transaction_id: localEvent.transaction_id || null
-      }
+        transaction_id: localEvent.transaction_id || null,
+        receipt_url: localEvent.receipt_url || null
+      },
+      pendingReceiptBase64: receiptFile && receiptPreview ? receiptPreview : undefined,
+      pendingReceiptFileName: receiptFile ? receiptFile.name : undefined
     });
 
     for (const p of localParticipants) {
@@ -1403,12 +1408,14 @@ export function useFinancialData(user: User | null) {
 
   const handleUpdateExpenseEvent = useCallback(async (
     eventId: string,
-    eventData: Omit<ExpenseEvent, 'id' | 'user_id' | 'status'>,
+    eventData: Omit<ExpenseEvent, 'id' | 'user_id' | 'status'> & { receiptFile?: File | null; receiptPreview?: string | null },
     participantsInput: Omit<ExpenseParticipant, 'id' | 'event_id'>[],
     splitsInput: { participantIndex: number; amountDue: number }[],
     ownerCategory?: string
   ) => {
     if (!user) return;
+
+    const { receiptFile, receiptPreview, ...eventFields } = eventData;
 
     // 1. Get old participants to preserve IDs where display_name and is_owner match
     const oldParticipants = expenseParticipants.filter(p => p.event_id === eventId);
@@ -1453,8 +1460,8 @@ export function useFinancialData(user: User | null) {
           id: linkedTxId,
           amount: ownerSplitAmount,
           category: ownerCategory || 'Ăn uống',
-          description: `[Chi hộ] ${eventData.title}`,
-          date: eventData.event_date,
+          description: `[Chi hộ] ${eventFields.title}`,
+          date: eventFields.event_date,
           type: 'EXPENSE'
         };
         setTransactions(prev => prev.map(t => t.id === linkedTxId ? updatedTx : t));
@@ -1469,8 +1476,8 @@ export function useFinancialData(user: User | null) {
             user_id: user.id,
             amount: ownerSplitAmount,
             category: ownerCategory || 'Ăn uống',
-            description: `[Chi hộ] ${eventData.title}`,
-            transaction_date: eventData.event_date
+            description: `[Chi hộ] ${eventFields.title}`,
+            transaction_date: eventFields.event_date
           }
         });
       } else {
@@ -1480,8 +1487,8 @@ export function useFinancialData(user: User | null) {
           id: linkedTxId,
           amount: ownerSplitAmount,
           category: ownerCategory || 'Ăn uống',
-          description: `[Chi hộ] ${eventData.title}`,
-          date: eventData.event_date,
+          description: `[Chi hộ] ${eventFields.title}`,
+          date: eventFields.event_date,
           type: 'EXPENSE'
         };
         setTransactions(prev => [personalTx, ...prev]);
@@ -1497,8 +1504,8 @@ export function useFinancialData(user: User | null) {
             type: 'expense',
             amount: ownerSplitAmount,
             category: ownerCategory || 'Ăn uống',
-            description: `[Chi hộ] ${eventData.title}`,
-            transaction_date: eventData.event_date,
+            description: `[Chi hộ] ${eventFields.title}`,
+            transaction_date: eventFields.event_date,
             currency: 'VND'
           }
         });
@@ -1534,14 +1541,15 @@ export function useFinancialData(user: User | null) {
     const updatedEvent: ExpenseEvent = {
       id: eventId,
       user_id: user.id,
-      title: eventData.title,
-      event_date: eventData.event_date,
-      total_amount: eventData.total_amount,
-      split_method: eventData.split_method,
-      due_date: eventData.due_date,
-      description: eventData.description,
+      title: eventFields.title,
+      event_date: eventFields.event_date,
+      total_amount: eventFields.total_amount,
+      split_method: eventFields.split_method,
+      due_date: eventFields.due_date,
+      description: eventFields.description,
       status: status,
-      transaction_id: linkedTxId
+      transaction_id: linkedTxId,
+      receipt_url: receiptPreview || undefined
     };
 
     // Update local state
@@ -1596,8 +1604,11 @@ export function useFinancialData(user: User | null) {
         due_date: updatedEvent.due_date || null,
         description: updatedEvent.description || null,
         status: updatedEvent.status,
-        transaction_id: updatedEvent.transaction_id || null
-      }
+        transaction_id: updatedEvent.transaction_id || null,
+        receipt_url: updatedEvent.receipt_url || null
+      },
+      pendingReceiptBase64: receiptFile && receiptPreview ? receiptPreview : undefined,
+      pendingReceiptFileName: receiptFile ? receiptFile.name : undefined
     });
 
     const oldParticipantIds = new Set(oldParticipants.map(p => p.id));

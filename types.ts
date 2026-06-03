@@ -232,6 +232,7 @@ export interface ExpenseEvent {
   description?: string;
   status: ExpenseEventStatus;
   transaction_id?: string; // links to transaction of owner's personal share
+  receipt_url?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -286,6 +287,21 @@ export type SupabaseExpenseEventInsert = {
   description?: string | null;
   status: ExpenseEventStatus;
   transaction_id?: string | null;
+  receipt_url?: string | null;
+};
+
+export type SupabaseExpenseEventUpdate = {
+  id: string;
+  user_id: string;
+  title?: string;
+  event_date?: string;
+  total_amount?: number;
+  split_method?: 'equal' | 'custom';
+  due_date?: string | null;
+  description?: string | null;
+  status?: ExpenseEventStatus;
+  transaction_id?: string | null;
+  receipt_url?: string | null;
 };
 
 export type SupabaseExpenseParticipantInsert = {
@@ -335,6 +351,7 @@ export type SyncPayload =
   | { table: 'debt_payments'; action: 'INSERT'; data: SupabaseDebtPaymentInsert }
   | { table: 'debt_payments'; action: 'DELETE'; data: SupabaseDebtPaymentDelete }
   | { table: 'expense_events'; action: 'INSERT'; data: SupabaseExpenseEventInsert }
+  | { table: 'expense_events'; action: 'UPDATE'; data: SupabaseExpenseEventUpdate }
   | { table: 'expense_events'; action: 'DELETE'; data: { id: string; user_id: string } }
   | { table: 'expense_participants'; action: 'INSERT'; data: SupabaseExpenseParticipantInsert }
   | { table: 'expense_splits'; action: 'INSERT'; data: SupabaseExpenseSplitInsert }

@@ -60,6 +60,18 @@ export async function getPendingItems(): Promise<SyncQueueItem[]> {
     return items.sort((a, b) => a.timestamp - b.timestamp);
 }
 
+export async function clearFailedItems(): Promise<number> {
+    const items = await OfflineDB.getAll<SyncQueueItem>('sync_queue');
+    let cleared = 0;
+    for (const item of items) {
+        if (item.retryCount >= MAX_RETRIES) {
+            await OfflineDB.deleteById('sync_queue', item.id);
+            cleared++;
+        }
+    }
+    return cleared;
+}
+
 // ------- Process queue -------
 
 export interface SyncResult {
@@ -69,16 +81,40 @@ export interface SyncResult {
 }
 
 export async function processQueue(): Promise<SyncResult> {
+    // Remove permanently failed items first to prevent error loops
+    await clearFailedItems();
+
     const items = await getPendingItems();
     const result: SyncResult = { processed: 0, failed: 0, errors: [] };
 
+    // Track event_ids whose INSERT failed so we can skip dependent items
+    const failedEventIds = new Set<string>();
+
     for (const item of items) {
+        const itemData = item.data as any;
         try {
+            // Skip dependent items if their parent expense_event INSERT failed
+            if (
+                item.action === 'INSERT' &&
+                (item.table === 'expense_participants' || item.table === 'expense_splits' || item.table === 'repayments') &&
+                itemData.event_id &&
+                failedEventIds.has(itemData.event_id)
+            ) {
+                // Keep in queue for next attempt — don't count as error
+                continue;
+            }
+
             await processSingleItem(item);
             // Remove from queue on success
             await OfflineDB.deleteById('sync_queue', item.id);
             result.processed++;
         } catch (error: any) {
+            // Track failed expense_events so dependents are skipped
+            if (item.table === 'expense_events' && item.action === 'INSERT' && itemData.id) {
+                failedEventIds.add(itemData.id);
+            }
+
+
             item.retryCount++;
             if (item.retryCount >= MAX_RETRIES) {
                 // Give up — keep in queue but log the error
@@ -96,6 +132,9 @@ export async function processQueue(): Promise<SyncResult> {
 
     return result;
 }
+
+// Regex to validate UUID v4 format
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function processSingleItem(item: SyncQueueItem): Promise<void> {
     const { table, action, data } = item;
@@ -122,10 +161,35 @@ async function processSingleItem(item: SyncQueueItem): Promise<void> {
             delete insertData._tempId;
         }
 
+        // Sanitize UUID foreign key fields — nullify temp/non-UUID values
+        const uuidForeignKeys = ['transaction_id', 'event_id', 'participant_id'];
+        for (const key of uuidForeignKeys) {
+            if (key in insertData && insertData[key] && typeof insertData[key] === 'string') {
+                if (!UUID_REGEX.test(insertData[key])) {
+                    insertData[key] = null;
+                }
+            }
+        }
+
         const { error } = await supabase.from(table).insert([insertData]);
         if (error) throw error;
     } else if (action === 'UPDATE') {
-        const updateData = data as any;
+        const updateData = { ...data } as any;
+
+        // Handle pending receipt upload for updates
+        if (item.pendingReceiptBase64 && item.pendingReceiptFileName) {
+            try {
+                const blob = base64ToBlob(item.pendingReceiptBase64);
+                const file = new File([blob], item.pendingReceiptFileName, { type: blob.type });
+                const url = await StorageService.uploadReceipt(file);
+                if (url) {
+                    updateData.receipt_url = url;
+                }
+            } catch {
+                console.warn('Failed to upload queued receipt during update');
+            }
+        }
+
         const { id: recordId, user_id, ...updateFields } = updateData;
         const query = supabase.from(table).update(updateFields).eq('id', recordId);
         if (user_id) query.eq('user_id', user_id);
@@ -144,6 +208,7 @@ async function processSingleItem(item: SyncQueueItem): Promise<void> {
         if (error && !error.message.includes('not found')) throw error;
     }
 }
+
 
 // ------- Helpers -------
 

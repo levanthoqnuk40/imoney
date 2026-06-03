@@ -261,6 +261,24 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
             )}
           </div>
 
+          {/* Bill Receipt (if exists) */}
+          {event.receipt_url && (
+            <div className="space-y-2 mb-4">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">🧾 Hóa đơn đính kèm</span>
+              <div className="relative group overflow-hidden rounded-2xl border border-gray-200 shadow-sm bg-gray-50">
+                <img
+                  src={event.receipt_url}
+                  alt="Ảnh hóa đơn chi chung"
+                  className="w-full max-h-48 object-cover cursor-pointer hover:scale-[1.02] transition-transform"
+                  onClick={() => window.open(event.receipt_url, '_blank')}
+                />
+                <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded-lg pointer-events-none">
+                  🔍 Click để xem ảnh gốc
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Friends Settlement list */}
           <div>
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Tình hình hoàn trả bạn bè ({settlements.filter(s => !s.participant.is_owner).length})</h3>

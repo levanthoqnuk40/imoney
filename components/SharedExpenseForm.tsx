@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ExpenseEvent, ExpenseParticipant, ExpenseSplit, Category } from '../types';
+import { StorageService } from '../services/supabase.service';
 
 interface SharedExpenseFormProps {
   onSubmit: (
-    eventData: Omit<ExpenseEvent, 'id' | 'user_id' | 'status'>,
+    eventData: Omit<ExpenseEvent, 'id' | 'user_id' | 'status'> & { receiptFile?: File | null; receiptPreview?: string | null },
     participants: Omit<ExpenseParticipant, 'id' | 'event_id'>[],
     splits: { participantIndex: number; amountDue: number }[],
     ownerCategory?: string
@@ -30,6 +31,41 @@ export const SharedExpenseForm: React.FC<SharedExpenseFormProps> = ({
   const [description, setDescription] = useState(initialEvent?.description || '');
   const [splitMethod, setSplitMethod] = useState<'equal' | 'custom'>(initialEvent?.split_method || 'equal');
   const [ownerCategory, setOwnerCategory] = useState('Ăn uống');
+
+  // Receipt Upload States
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(initialEvent?.receipt_url || null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+        alert('Chỉ chấp nhận file ảnh (JPEG, PNG, WebP, HEIC)');
+        e.target.value = '';
+        return;
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        alert('File quá lớn. Tối đa 5MB');
+        e.target.value = '';
+        return;
+      }
+      setReceiptFile(file);
+      const preview = await StorageService.fileToBase64(file);
+      setReceiptPreview(preview);
+    }
+  };
+
+  const handleRemoveReceipt = () => {
+    setReceiptFile(null);
+    setReceiptPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+  };
   
   // List of participants names. Owner is always index 0.
   const [friends, setFriends] = useState<string[]>(() => {
@@ -196,7 +232,9 @@ export const SharedExpenseForm: React.FC<SharedExpenseFormProps> = ({
         total_amount: totalVal,
         split_method: splitMethod,
         due_date: dueDate || undefined,
-        description: description.trim() || undefined
+        description: description.trim() || undefined,
+        receiptFile,
+        receiptPreview
       },
       participantsList,
       finalSplits,
@@ -303,6 +341,72 @@ export const SharedExpenseForm: React.FC<SharedExpenseFormProps> = ({
               className="w-full px-4 py-3 sm:py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-base"
               placeholder="VD: Quán bia 88, anh A gửi Momo..."
             />
+          </div>
+
+          {/* Receipt Upload */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+              Ảnh hóa đơn / Bill thanh toán <span className="text-gray-405 font-normal normal-case">(tùy chọn)</span>
+            </label>
+
+            {!receiptPreview ? (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-all touch-target"
+                >
+                  <span className="text-xl">📷</span>
+                  <span className="text-sm font-semibold text-gray-600">Chụp ảnh</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-all touch-target"
+                >
+                  <span className="text-xl">🖼️</span>
+                  <span className="text-sm font-semibold text-gray-600">Thư viện</span>
+                </button>
+
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+              </div>
+            ) : (
+              <div className="relative">
+                <img
+                  src={receiptPreview}
+                  alt="Preview hoá đơn"
+                  className="w-full h-40 object-cover rounded-xl border border-gray-200"
+                />
+                <button
+                  type="button"
+                  onClick={handleRemoveReceipt}
+                  className="absolute top-2 right-2 bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition-colors"
+                  aria-label="Xoá ảnh"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                <p className="text-xs text-gray-500 mt-2 text-center truncate px-2">
+                  {receiptFile ? receiptFile.name : 'Ảnh đã lưu'}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Split Method Toggle */}
