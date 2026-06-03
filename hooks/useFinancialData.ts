@@ -70,9 +70,27 @@ export function useFinancialData(user: User | null) {
     setPendingSyncCount(count);
   }, []);
 
+  // Process queue and show UI alert if there are sync errors
+  const processQueueAndLog = useCallback(async (context: string) => {
+    try {
+      const result = await SyncService.processQueue();
+      if (result && result.errors && result.errors.length > 0) {
+        console.error(`[Sync Queue Errors - ${context}]:`, result.errors);
+        alert(`Lỗi đồng bộ dữ liệu (${context}):\n${result.errors.join('\n')}`);
+      }
+      return result;
+    } catch (err) {
+      console.error(`Failed to process sync queue during ${context}:`, err);
+    }
+  }, []);
+
   // Sync handler: process queue + reload all data
   const handleSync = useCallback(async () => {
     const result = await SyncService.processQueue();
+    if (result && result.errors && result.errors.length > 0) {
+      console.error('[Sync Queue Errors - handleSync]:', result.errors);
+      alert(`Lỗi đồng bộ dữ liệu (Đồng bộ tự động/thủ công):\n${result.errors.join('\n')}`);
+    }
     if (user) {
       await Promise.all([
         loadTransactionsRef.current?.(),
@@ -1335,11 +1353,7 @@ export function useFinancialData(user: User | null) {
     }
 
     if (navigator.onLine) {
-      try {
-        await SyncService.processQueue();
-      } catch (err) {
-        console.error('Error processing queue after add:', err);
-      }
+      await processQueueAndLog('Thêm khoản chi hộ');
       if (loadExpenseDataRef.current) {
         loadExpenseDataRef.current().catch(err => console.error('Error reloading after add:', err));
       }
@@ -1398,11 +1412,7 @@ export function useFinancialData(user: User | null) {
     }
 
     if (navigator.onLine) {
-      try {
-        await SyncService.processQueue();
-      } catch (err) {
-        console.error('Error processing queue after delete event:', err);
-      }
+      await processQueueAndLog('Xóa khoản chi hộ');
     }
     await refreshPendingCount();
   }, [user, expenseEvents, expenseParticipants, expenseSplits, repayments, refreshPendingCount]);
@@ -1484,11 +1494,7 @@ export function useFinancialData(user: User | null) {
     });
 
     if (navigator.onLine) {
-      try {
-        await SyncService.processQueue();
-      } catch (err) {
-        console.error('Error processing queue after repayment:', err);
-      }
+      await processQueueAndLog('Ghi nhận hoàn trả');
       if (loadExpenseDataRef.current) {
         loadExpenseDataRef.current().catch(err => console.error('Error reloading after repayment:', err));
       }
@@ -1554,11 +1560,7 @@ export function useFinancialData(user: User | null) {
     }
 
     if (navigator.onLine) {
-      try {
-        await SyncService.processQueue();
-      } catch (err) {
-        console.error('Error processing queue after delete repayment:', err);
-      }
+      await processQueueAndLog('Xóa khoản hoàn trả');
     }
     await refreshPendingCount();
   }, [user, repayments, expenseEvents, expenseParticipants, expenseSplits, refreshPendingCount]);
