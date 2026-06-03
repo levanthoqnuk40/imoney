@@ -1321,6 +1321,7 @@ const App: React.FC = () => {
           onClose={() => setSelectedSharedEvent(null)}
           onAddRepayment={handleAddRepayment}
           onDeleteRepayment={handleDeleteRepayment}
+          onDeleteEvent={handleDeleteExpenseEvent}
         />
       )}
     </div>
