@@ -25,6 +25,22 @@ import * as NotificationService from './services/notification.service';
 import { NotificationAlert } from './services/notification.service';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
 
+// Clean up description metadata and technical codes for mobile
+const formatDescription = (desc: string) => {
+  if (!desc || desc.trim() === '' || desc.toLowerCase() === 'null') {
+    return 'Không có ghi chú';
+  }
+  
+  // Clean transaction references or trace codes
+  return desc.split(' ').map(word => {
+    // If it's a long alphanumeric code (e.g. VCBFT123456 or Momo cashin ID)
+    if (word.length > 12 && /^[a-z0-9]+$/i.test(word)) {
+      return word.slice(0, 6) + '...';
+    }
+    return word;
+  }).join(' ');
+};
+
 const App: React.FC = () => {
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -1564,14 +1580,14 @@ const App: React.FC = () => {
             </div>
 
             {/* Overview Stats */}
-            <div className="w-full max-w-full flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-none sm:grid sm:grid-cols-3 sm:gap-4">
-              <div className="snap-start min-w-[85%] sm:min-w-0 flex-shrink-0">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
+              <div className="col-span-2 sm:col-span-1">
                 <StatsCard title="Số dư hiện tại" amount={stats.balance} type="balance" />
               </div>
-              <div className="snap-start min-w-[85%] sm:min-w-0 flex-shrink-0">
+              <div className="col-span-1">
                 <StatsCard title="Tổng thu nhập" amount={stats.totalIncome} type="income" />
               </div>
-              <div className="snap-start min-w-[85%] sm:min-w-0 flex-shrink-0">
+              <div className="col-span-1">
                 <StatsCard title="Tổng chi tiêu" amount={stats.totalExpense} type="expense" />
               </div>
             </div>
@@ -1658,100 +1674,102 @@ const App: React.FC = () => {
 
                 {/* Transaction List */}
                 <div className="card overflow-hidden">
-                  <div className="p-4 sm:p-6 border-b border-gray-100 flex flex-col gap-4">
-                    <div className="flex justify-between items-center">
-                      <h3 className="text-base sm:text-lg font-bold text-gray-800">Lịch sử giao dịch</h3>
-                      <span className="text-xs sm:text-sm text-gray-500">
-                        {(() => {
-                          const displayTx = transactions.filter(t => {
-                            if (filterMonth && !t.date.startsWith(filterMonth)) return false;
-                            if (typeFilter !== 'ALL' && t.type !== typeFilter) return false;
-                            if (searchTerm) {
-                              const q = searchTerm.toLowerCase();
-                              return t.category.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || t.amount.toString().includes(q);
-                            }
-                            return true;
-                          });
-                          return `${displayTx.length} giao dịch`;
-                        })()}
-                      </span>
-                    </div>
-
-                    {/* Search and Quick Filters */}
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      {/* Search input */}
-                      <div className="relative flex-1">
-                        <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                          </svg>
+                  <div className="sticky top-[56px] sm:top-[64px] z-20 bg-white border-b border-gray-100 shadow-sm">
+                    <div className="p-4 sm:p-6 flex flex-col gap-4">
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-base sm:text-lg font-bold text-gray-800">Lịch sử giao dịch</h3>
+                        <span className="text-xs sm:text-sm text-gray-500">
+                          {(() => {
+                            const displayTx = transactions.filter(t => {
+                              if (filterMonth && !t.date.startsWith(filterMonth)) return false;
+                              if (typeFilter !== 'ALL' && t.type !== typeFilter) return false;
+                              if (searchTerm) {
+                                const q = searchTerm.toLowerCase();
+                                return t.category.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || t.amount.toString().includes(q);
+                              }
+                              return true;
+                            });
+                            return `${displayTx.length} giao dịch`;
+                          })()}
                         </span>
-                        <input
-                          type="text"
-                          placeholder="Tìm kiếm giao dịch..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                        />
-                        {searchTerm && (
-                          <button
-                            onClick={() => setSearchTerm('')}
-                            className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
-                          >
-                            ✕
-                          </button>
-                        )}
                       </div>
 
-                      {/* Type filter tags */}
-                      <div className="w-full sm:w-auto flex bg-gray-100 p-0.5 rounded-xl overflow-x-auto scrollbar-none">
-                        <button
-                          onClick={() => setTypeFilter('ALL')}
-                          className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                            typeFilter === 'ALL'
-                              ? 'bg-white text-gray-800 shadow-sm'
-                              : 'text-gray-500 hover:text-gray-700'
-                          }`}
-                        >
-                          Tất cả
-                        </button>
-                        <button
-                          onClick={() => setTypeFilter('INCOME')}
-                          className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                            typeFilter === 'INCOME'
-                              ? 'bg-white text-emerald-600 shadow-sm'
-                              : 'text-gray-500 hover:text-gray-700'
-                          }`}
-                        >
-                          Thu nhập
-                        </button>
-                        <button
-                          onClick={() => setTypeFilter('EXPENSE')}
-                          className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                            typeFilter === 'EXPENSE'
-                              ? 'bg-white text-rose-600 shadow-sm'
-                              : 'text-gray-500 hover:text-gray-700'
-                          }`}
-                        >
-                          Chi tiêu
-                        </button>
+                      {/* Search and Quick Filters */}
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        {/* Search input */}
+                        <div className="relative flex-1">
+                          <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                          </span>
+                          <input
+                            type="text"
+                            placeholder="Tìm kiếm giao dịch..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                          />
+                          {searchTerm && (
+                            <button
+                              onClick={() => setSearchTerm('')}
+                              className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Type filter tags */}
+                        <div className="w-full sm:w-auto flex bg-gray-100 p-0.5 rounded-xl overflow-x-auto scrollbar-none">
+                          <button
+                            onClick={() => setTypeFilter('ALL')}
+                            className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                              typeFilter === 'ALL'
+                                ? 'bg-white text-gray-800 shadow-sm'
+                                : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                          >
+                            Tất cả
+                          </button>
+                          <button
+                            onClick={() => setTypeFilter('INCOME')}
+                            className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                              typeFilter === 'INCOME'
+                                ? 'bg-white text-emerald-600 shadow-sm'
+                                : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                          >
+                            Thu nhập
+                          </button>
+                          <button
+                            onClick={() => setTypeFilter('EXPENSE')}
+                            className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                              typeFilter === 'EXPENSE'
+                                ? 'bg-white text-rose-600 shadow-sm'
+                                : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                          >
+                            Chi tiêu
+                          </button>
+                        </div>
                       </div>
                     </div>
+                    {/* Month filter banner */}
+                    {filterMonth && (
+                      <div className="px-4 sm:px-6 py-2 bg-blue-50 border-t border-blue-100 flex items-center justify-between">
+                        <span className="text-sm text-blue-700 font-medium">
+                          📅 Tháng {parseInt(filterMonth.split('-')[1])}/{filterMonth.split('-')[0]}
+                        </span>
+                        <button
+                          onClick={() => setFilterMonth(null)}
+                          className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-lg hover:bg-blue-100 transition-colors"
+                        >
+                          Xem tất cả ✕
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  {/* Month filter banner */}
-                  {filterMonth && (
-                    <div className="px-4 sm:px-6 py-2 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
-                      <span className="text-sm text-blue-700 font-medium">
-                        📅 Tháng {parseInt(filterMonth.split('-')[1])}/{filterMonth.split('-')[0]}
-                      </span>
-                      <button
-                        onClick={() => setFilterMonth(null)}
-                        className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded-lg hover:bg-blue-100 transition-colors"
-                      >
-                        Xem tất cả ✕
-                      </button>
-                    </div>
-                  )}
                   <div>
                     {(() => {
                       const displayTx = transactions.filter(t => {
@@ -1775,44 +1793,61 @@ const App: React.FC = () => {
                             const formatted = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
                             return (
                               <div key={date}>
-                                <div className="sticky top-0 z-10 px-4 sm:px-6 py-2 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-                                  <span className="text-xs sm:text-sm font-semibold text-gray-600">📅 {formatted}</span>
-                                  <span className="text-xs text-gray-400">{txs.length} giao dịch</span>
+                                <div className="px-4 py-2.5 bg-slate-50 border-y border-slate-100 flex justify-between items-center mt-4 first:mt-0">
+                                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                                    <span className="text-sm">📅</span> {formatted}
+                                  </span>
+                                  <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-full">
+                                    {txs.length} giao dịch
+                                  </span>
                                 </div>
                                 <div className="divide-y divide-gray-50">
-                                  {txs.map(tx => (
-                                    <div
-                                      key={tx.id}
-                                      className="transaction-item group cursor-pointer hover:bg-gray-50"
-                                      onClick={() => setSelectedTransaction(tx)}
-                                    >
-                                      <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
-                                        <div className={`w-10 h-10 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg ${tx.type === 'INCOME' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+                                  {txs.map(tx => {
+                                    const cat = categories.find(c => c.name === tx.category);
+                                    const emoji = cat?.icon || (tx.type === 'INCOME' ? '💵' : '💸');
+                                    return (
+                                      <div
+                                        key={tx.id}
+                                        className="transaction-item group cursor-pointer hover:bg-gray-50"
+                                        onClick={() => setSelectedTransaction(tx)}
+                                      >
+                                        <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
+                                          <div className={`w-10 h-10 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-base sm:text-lg ${
+                                            tx.type === 'INCOME' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
                                           }`}>
-                                          {tx.type === 'INCOME' ? '↓' : '↑'}
+                                            {emoji}
+                                          </div>
+                                          <div className="min-w-0 flex-1">
+                                            <p className="font-semibold text-gray-800 text-sm sm:text-base truncate">{tx.category}</p>
+                                            <p className="text-xs text-gray-400 truncate">{formatDescription(tx.description)}</p>
+                                          </div>
                                         </div>
-                                        <div className="min-w-0 flex-1">
-                                          <p className="font-semibold text-gray-800 text-sm sm:text-base truncate">{tx.category}</p>
-                                          <p className="text-xs text-gray-500 truncate">{tx.description || 'Không có ghi chú'}</p>
+                                        <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 ml-3">
+                                          <div className="flex flex-col items-end">
+                                            <p className={`font-bold text-right text-sm sm:text-base whitespace-nowrap ${
+                                              tx.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'
+                                            }`}>
+                                              {tx.type === 'INCOME' ? '+' : '-'}{tx.amount.toLocaleString('vi-VN')}đ
+                                            </p>
+                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md mt-0.5 ${
+                                              tx.type === 'INCOME' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                                            }`}>
+                                              {tx.type === 'INCOME' ? 'THU' : 'CHI'}
+                                            </span>
+                                          </div>
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
+                                            className="transaction-delete-btn text-gray-300 hover:text-rose-500 transition-all touch-target flex items-center justify-center"
+                                            aria-label="Xóa giao dịch"
+                                          >
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                            </svg>
+                                          </button>
                                         </div>
                                       </div>
-                                      <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
-                                        <p className={`font-bold text-right text-sm sm:text-base ${tx.type === 'INCOME' ? 'text-emerald-600' : 'text-rose-600'
-                                          }`}>
-                                          {tx.type === 'INCOME' ? '+' : '-'}{tx.amount.toLocaleString('vi-VN')}
-                                        </p>
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
-                                          className="transaction-delete-btn text-gray-300 hover:text-rose-500 transition-all touch-target flex items-center justify-center"
-                                          aria-label="Xóa giao dịch"
-                                        >
-                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                          </svg>
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             );
@@ -2151,28 +2186,42 @@ const App: React.FC = () => {
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 sm:hidden z-40">
+      <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-100 sm:hidden z-40">
         <div className="flex items-center justify-around py-2" style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' }}>
           <button
             onClick={() => setCurrentView('dashboard')}
-            className={`flex flex-col items-center justify-center py-1.5 px-2 min-w-[48px] ${currentView === 'dashboard' ? 'text-blue-600' : 'text-gray-400'
-              }`}
+            className="flex flex-col items-center justify-center flex-1 py-1"
           >
-            <svg className="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
-            </svg>
-            <span className="text-[10px] font-medium">Tổng quan</span>
+            <div className={`flex items-center justify-center w-12 h-7 rounded-full transition-all ${
+              currentView === 'dashboard' ? 'bg-blue-50 text-blue-600 scale-105' : 'text-gray-400'
+            }`}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+              </svg>
+            </div>
+            <span className={`text-[10px] mt-1 transition-all ${
+              currentView === 'dashboard' ? 'text-blue-600 font-bold' : 'text-gray-400 font-medium'
+            }`}>
+              Tổng quan
+            </span>
           </button>
 
           <button
             onClick={() => setCurrentView('transactions')}
-            className={`flex flex-col items-center justify-center py-1.5 px-2 min-w-[48px] ${currentView === 'transactions' ? 'text-blue-600' : 'text-gray-400'
-              }`}
+            className="flex flex-col items-center justify-center flex-1 py-1"
           >
-            <svg className="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-            <span className="text-[10px] font-medium">Giao dịch</span>
+            <div className={`flex items-center justify-center w-12 h-7 rounded-full transition-all ${
+              currentView === 'transactions' ? 'bg-blue-50 text-blue-600 scale-105' : 'text-gray-400'
+            }`}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+            <span className={`text-[10px] mt-1 transition-all ${
+              currentView === 'transactions' ? 'text-blue-600 font-bold' : 'text-gray-400 font-medium'
+            }`}>
+              Giao dịch
+            </span>
           </button>
 
           <button
@@ -2181,7 +2230,7 @@ const App: React.FC = () => {
               else if (currentView === 'gifts') setIsGiftFormOpen(true);
               else setIsFormOpen(true);
             }}
-            className="flex items-center justify-center w-12 h-12 bg-blue-600 rounded-full shadow-lg -mt-5 text-white active:scale-95 transition-transform"
+            className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-full shadow-lg shadow-blue-500/30 -mt-5 text-white active:scale-95 transition-transform"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path>
@@ -2190,22 +2239,36 @@ const App: React.FC = () => {
 
           <button
             onClick={() => setCurrentView('debts')}
-            className={`flex flex-col items-center justify-center py-1.5 px-2 min-w-[48px] ${currentView === 'debts' ? 'text-blue-600' : 'text-gray-400'
-              }`}
+            className="flex flex-col items-center justify-center flex-1 py-1"
           >
-            <svg className="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-            </svg>
-            <span className="text-[10px] font-medium">Dư nợ</span>
+            <div className={`flex items-center justify-center w-12 h-7 rounded-full transition-all ${
+              currentView === 'debts' ? 'bg-blue-50 text-blue-600 scale-105' : 'text-gray-400'
+            }`}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+            </div>
+            <span className={`text-[10px] mt-1 transition-all ${
+              currentView === 'debts' ? 'text-blue-600 font-bold' : 'text-gray-400 font-medium'
+            }`}>
+              Dư nợ
+            </span>
           </button>
 
           <button
             onClick={() => setCurrentView('gifts')}
-            className={`flex flex-col items-center justify-center py-1.5 px-2 min-w-[48px] ${currentView === 'gifts' ? 'text-blue-600' : 'text-gray-400'
-              }`}
+            className="flex flex-col items-center justify-center flex-1 py-1"
           >
-            <span className="text-lg mb-0.5">🎁</span>
-            <span className="text-[10px] font-medium">Ghi nhớ</span>
+            <div className={`flex items-center justify-center w-12 h-7 rounded-full transition-all ${
+              currentView === 'gifts' ? 'bg-blue-50 text-blue-600 scale-105' : 'text-gray-400'
+            }`}>
+              <span className="text-base">🎁</span>
+            </div>
+            <span className={`text-[10px] mt-1 transition-all ${
+              currentView === 'gifts' ? 'text-blue-600 font-bold' : 'text-gray-400 font-medium'
+            }`}>
+              Ghi nhớ
+            </span>
           </button>
         </div>
       </div>
