@@ -43,6 +43,8 @@ const App: React.FC = () => {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showTips, setShowTips] = useState(false);
   const [filterMonth, setFilterMonth] = useState<string | null>(null); // 'YYYY-MM' or null
+  const [searchTerm, setSearchTerm] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'INCOME' | 'EXPENSE'>('ALL');
 
   // Debt management state
   const [debts, setDebts] = useState<Debt[]>([]);
@@ -1562,10 +1564,14 @@ const App: React.FC = () => {
             </div>
 
             {/* Overview Stats */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
-              <StatsCard title="Số dư hiện tại" amount={stats.balance} type="balance" />
-              <StatsCard title="Tổng thu nhập" amount={stats.totalIncome} type="income" />
-              <div className="col-span-2 sm:col-span-1">
+            <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-none sm:grid sm:grid-cols-3 sm:gap-4">
+              <div className="snap-start min-w-[85%] sm:min-w-0 flex-shrink-0">
+                <StatsCard title="Số dư hiện tại" amount={stats.balance} type="balance" />
+              </div>
+              <div className="snap-start min-w-[85%] sm:min-w-0 flex-shrink-0">
+                <StatsCard title="Tổng thu nhập" amount={stats.totalIncome} type="income" />
+              </div>
+              <div className="snap-start min-w-[85%] sm:min-w-0 flex-shrink-0">
                 <StatsCard title="Tổng chi tiêu" amount={stats.totalExpense} type="expense" />
               </div>
             </div>
@@ -1652,16 +1658,85 @@ const App: React.FC = () => {
 
                 {/* Transaction List */}
                 <div className="card overflow-hidden">
-                  <div className="p-4 sm:p-6 border-b border-gray-100 flex justify-between items-center">
-                    <h3 className="text-base sm:text-lg font-bold text-gray-800">Lịch sử giao dịch</h3>
-                    <span className="text-xs sm:text-sm text-gray-500">
-                      {(() => {
-                        const filtered = filterMonth
-                          ? transactions.filter(t => t.date.startsWith(filterMonth))
-                          : transactions;
-                        return `${filtered.length} giao dịch`;
-                      })()}
-                    </span>
+                  <div className="p-4 sm:p-6 border-b border-gray-100 flex flex-col gap-4">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-base sm:text-lg font-bold text-gray-800">Lịch sử giao dịch</h3>
+                      <span className="text-xs sm:text-sm text-gray-500">
+                        {(() => {
+                          const displayTx = transactions.filter(t => {
+                            if (filterMonth && !t.date.startsWith(filterMonth)) return false;
+                            if (typeFilter !== 'ALL' && t.type !== typeFilter) return false;
+                            if (searchTerm) {
+                              const q = searchTerm.toLowerCase();
+                              return t.category.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || t.amount.toString().includes(q);
+                            }
+                            return true;
+                          });
+                          return `${displayTx.length} giao dịch`;
+                        })()}
+                      </span>
+                    </div>
+
+                    {/* Search and Quick Filters */}
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      {/* Search input */}
+                      <div className="relative flex-1">
+                        <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                        </span>
+                        <input
+                          type="text"
+                          placeholder="Tìm kiếm giao dịch..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                        />
+                        {searchTerm && (
+                          <button
+                            onClick={() => setSearchTerm('')}
+                            className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Type filter tags */}
+                      <div className="w-full sm:w-auto flex bg-gray-100 p-0.5 rounded-xl">
+                        <button
+                          onClick={() => setTypeFilter('ALL')}
+                          className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                            typeFilter === 'ALL'
+                              ? 'bg-white text-gray-800 shadow-sm'
+                              : 'text-gray-500 hover:text-gray-700'
+                          }`}
+                        >
+                          Tất cả
+                        </button>
+                        <button
+                          onClick={() => setTypeFilter('INCOME')}
+                          className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                            typeFilter === 'INCOME'
+                              ? 'bg-white text-emerald-600 shadow-sm'
+                              : 'text-gray-500 hover:text-gray-700'
+                          }`}
+                        >
+                          Thu nhập
+                        </button>
+                        <button
+                          onClick={() => setTypeFilter('EXPENSE')}
+                          className={`flex-1 sm:flex-initial text-center px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                            typeFilter === 'EXPENSE'
+                              ? 'bg-white text-rose-600 shadow-sm'
+                              : 'text-gray-500 hover:text-gray-700'
+                          }`}
+                        >
+                          Chi tiêu
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   {/* Month filter banner */}
                   {filterMonth && (
@@ -1679,9 +1754,15 @@ const App: React.FC = () => {
                   )}
                   <div>
                     {(() => {
-                      const displayTx = filterMonth
-                        ? transactions.filter(t => t.date.startsWith(filterMonth))
-                        : transactions;
+                      const displayTx = transactions.filter(t => {
+                        if (filterMonth && !t.date.startsWith(filterMonth)) return false;
+                        if (typeFilter !== 'ALL' && t.type !== typeFilter) return false;
+                        if (searchTerm) {
+                          const q = searchTerm.toLowerCase();
+                          return t.category.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || t.amount.toString().includes(q);
+                        }
+                        return true;
+                      });
                       return displayTx.length > 0 ? (
                         (() => {
                           const grouped: Record<string, typeof transactions> = {};

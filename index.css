@@ -207,12 +207,12 @@ input, select, textarea {
 
 /* ===== Transaction List ===== */
 .transaction-item {
-  padding: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
-  min-height: 64px;
+  min-height: 56px;
   transition: background-color var(--transition-fast);
 }
 
@@ -221,19 +221,24 @@ input, select, textarea {
 }
 
 @media (min-width: 768px) {
+  .transaction-item {
+    padding: var(--space-md);
+    min-height: 64px;
+  }
   .transaction-item:hover {
     background-color: #f8fafc;
   }
 }
 
-/* Show delete button on mobile (no hover) */
+/* Hide delete button on mobile (Option A) */
 .transaction-delete-btn {
-  opacity: 1;
+  display: none;
   padding: var(--space-sm);
 }
 
 @media (min-width: 768px) {
   .transaction-delete-btn {
+    display: flex;
     opacity: 0;
     transition: opacity var(--transition-fast);
   }
@@ -354,4 +359,13 @@ select:focus-visible {
 @keyframes skeleton-loading {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+/* Hide scrollbar utility */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 }
