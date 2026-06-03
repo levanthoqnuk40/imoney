@@ -1535,7 +1535,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-4 sm:py-6 lg:py-8">
+      <main className="max-w-6xl mx-auto px-4 py-4 sm:py-6 lg:py-8 safe-bottom">
         {/* Dashboard View */}
         {currentView === 'dashboard' && (
           <Dashboard
@@ -1554,11 +1554,20 @@ const App: React.FC = () => {
         {/* Transactions View */}
         {currentView === 'transactions' && (
           <div className="space-y-6 lg:space-y-8">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-800">Lịch sử giao dịch</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Quản lý thu chi và xem phân tích dòng tiền</p>
+              </div>
+            </div>
+
             {/* Overview Stats */}
-            <div className="stats-grid">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               <StatsCard title="Số dư hiện tại" amount={stats.balance} type="balance" />
               <StatsCard title="Tổng thu nhập" amount={stats.totalIncome} type="income" />
-              <StatsCard title="Tổng chi tiêu" amount={stats.totalExpense} type="expense" />
+              <div className="col-span-2 sm:col-span-1">
+                <StatsCard title="Tổng chi tiêu" amount={stats.totalExpense} type="expense" />
+              </div>
             </div>
 
             <div className="main-layout">
@@ -1588,7 +1597,7 @@ const App: React.FC = () => {
                 )}
 
                 {/* Charts Section */}
-                <div className="charts-grid">
+                <div className="charts-grid hidden sm:grid">
                   <div className="card p-4 sm:p-6">
                     <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-4">Chi tiêu theo mục</h3>
                     <div className="chart-container">
@@ -1784,6 +1793,13 @@ const App: React.FC = () => {
         {/* Debts View */}
         {currentView === 'debts' && (
           <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-800">Quản lý dư nợ</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Theo dõi các khoản người khác nợ mình và mình nợ người khác</p>
+              </div>
+            </div>
+
             {/* Summary Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               <div className="card p-4 bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200">
@@ -1918,6 +1934,13 @@ const App: React.FC = () => {
         {/* Gifts View */}
         {currentView === 'gifts' && (
           <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-800">Sổ tay ghi nhớ quà tặng</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Ghi nhớ tiền hiếu hỉ, quà tặng đã trao đi hoặc nhận lại</p>
+              </div>
+            </div>
+
             {/* Summary Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
               <div className="card p-4 bg-gradient-to-br from-rose-50 to-rose-100 border-rose-200">
