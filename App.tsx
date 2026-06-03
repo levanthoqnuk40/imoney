@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Transaction, AIAdvice, Budget, ViewType, Debt, DebtType, GiftRecord, GiftDirection, GiftEventType } from './types';
+import { Transaction, AIAdvice, Budget, ViewType, Debt, DebtType, GiftRecord, GiftDirection, GiftEventType, Category } from './types';
 import StatsCard from './components/StatsCard';
 import TransactionForm from './components/TransactionForm';
 import Dashboard from './components/Dashboard';
 import BudgetModal from './components/BudgetModal';
 import LoginScreen from './components/LoginScreen';
 import TransactionDetail from './components/TransactionDetail';
+import CategoryModal from './components/CategoryModal';
 import DebtCard from './components/DebtCard';
 import DebtForm from './components/DebtForm';
 import DebtDetail from './components/DebtDetail';
@@ -16,7 +17,7 @@ import GiftDetail from './components/GiftDetail';
 import { getFinancialAdvice } from './services/geminiService';
 import { supabase } from './services/supabase.service';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
-import { COLORS, GIFT_EVENT_TYPES, autoCategorize } from './constants';
+import { COLORS, GIFT_EVENT_TYPES, autoCategorize, getCategories, saveCategories } from './constants';
 import { User } from '@supabase/supabase-js';
 import * as OfflineDB from './services/offline.service';
 import * as SyncService from './services/sync.service';
@@ -33,8 +34,10 @@ const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [categories, setCategories] = useState<Category[]>(() => getCategories());
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
+  const [isCategoryMgmtOpen, setIsCategoryMgmtOpen] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [aiAdvice, setAiAdvice] = useState<AIAdvice | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -159,7 +162,7 @@ const App: React.FC = () => {
     return Promise.all(rawTxList.map(async t => {
       let category = t.category;
       if (category === 'Chuyển khoản đi' || category === 'Chuyển khoản nhận' || category === 'Khác') {
-        const autoCat = autoCategorize(t.description);
+        const autoCat = autoCategorize(t.description, categories);
         if (autoCat && autoCat.type === t.type) {
           category = autoCat.category;
           if (updateDb && !t.id.startsWith('temp_')) {
@@ -184,7 +187,7 @@ const App: React.FC = () => {
       }
       return { ...t, category };
     }));
-  }, []);
+  }, [categories]);
 
   // Load transactions — online: fetch from Supabase + cache; offline: read IndexedDB
   const loadTransactions = useCallback(async () => {
@@ -229,22 +232,284 @@ const App: React.FC = () => {
       // Fallback to IndexedDB on network error
       const cached = await OfflineDB.getAll<Transaction>('transactions');
       cached.sort((a, b) => b.date.localeCompare(a.date));
-      setTransactions(cached);
+      const processed = await autoCategorizeTransactions(cached, false);
+      setTransactions(processed);
     } finally {
       setIsLoading(false);
     }
+  }, [user, autoCategorizeTransactions]);
+
+  // Load categories from Supabase (or fallback to IndexedDB / localStorage)
+  const loadCategories = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      if (navigator.onLine) {
+        const { data, error } = await supabase
+          .from('categories')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          const fetchedCategories: Category[] = data.map(c => ({
+            id: c.id,
+            name: c.name,
+            icon: c.icon,
+            type: c.type as 'INCOME' | 'EXPENSE',
+            keywords: c.keywords || []
+          }));
+          setCategories(fetchedCategories);
+          saveCategories(fetchedCategories);
+          await OfflineDB.clearStore('categories');
+          await OfflineDB.putAll('categories', fetchedCategories);
+          return;
+        } else {
+          // If no categories in Supabase (new user), upload default categories
+          const { error: insertError } = await supabase
+            .from('categories')
+            .insert(
+              DEFAULT_CATEGORIES.map(c => ({
+                id: c.id,
+                user_id: user.id,
+                name: c.name,
+                icon: c.icon,
+                type: c.type,
+                keywords: c.keywords
+              }))
+            );
+          if (insertError) {
+            console.error('Failed to upload default categories:', insertError);
+          }
+          // Use default categories in state
+          setCategories(DEFAULT_CATEGORIES);
+          saveCategories(DEFAULT_CATEGORIES);
+          await OfflineDB.clearStore('categories');
+          await OfflineDB.putAll('categories', DEFAULT_CATEGORIES);
+          return;
+        }
+      }
+
+      // Offline: load from IndexedDB
+      const cached = await OfflineDB.getAll<Category>('categories');
+      if (cached && cached.length > 0) {
+        setCategories(cached);
+        saveCategories(cached);
+      } else {
+        // Fallback to default
+        setCategories(DEFAULT_CATEGORIES);
+        saveCategories(DEFAULT_CATEGORIES);
+      }
+    } catch (error) {
+      console.error('Error loading categories:', error);
+      // Fallback to IndexedDB / localStorage on error
+      const cached = await OfflineDB.getAll<Category>('categories');
+      if (cached && cached.length > 0) {
+        setCategories(cached);
+        saveCategories(cached);
+      } else {
+        const localSaved = getCategories();
+        setCategories(localSaved);
+      }
+    }
   }, [user]);
+
+  // Handle categories changes (add/edit/delete) with cascade updates for renames
+  const handleCategoriesChange = useCallback(async (newCategories: Category[], renameMap?: { oldName: string; newName: string }) => {
+    // Save new categories
+    setCategories(newCategories);
+    saveCategories(newCategories);
+
+    // Sync category changes to Supabase & IndexedDB
+    if (user) {
+      // 1. Detect inserts, updates, and deletes
+      const addedOrUpdated = newCategories.filter(nc => {
+        const old = categories.find(oc => oc.id === nc.id);
+        return !old || old.name !== nc.name || old.icon !== nc.icon || JSON.stringify(old.keywords) !== JSON.stringify(nc.keywords);
+      });
+
+      const deleted = categories.filter(oc => !newCategories.some(nc => nc.id === oc.id));
+
+      // Process added or updated items
+      for (const item of addedOrUpdated) {
+        const isNew = !categories.some(oc => oc.id === item.id);
+        const action = isNew ? 'INSERT' : 'UPDATE';
+
+        // Update IndexedDB immediately
+        await OfflineDB.put('categories', item);
+
+        const payload = {
+          id: item.id,
+          user_id: user.id,
+          name: item.name,
+          icon: item.icon,
+          type: item.type,
+          keywords: item.keywords
+        };
+
+        if (navigator.onLine) {
+          try {
+            if (isNew) {
+              const { error } = await supabase.from('categories').insert([payload]);
+              if (error) throw error;
+            } else {
+              const { error } = await supabase
+                .from('categories')
+                .update({ name: item.name, icon: item.icon, type: item.type, keywords: item.keywords })
+                .eq('id', item.id)
+                .eq('user_id', user.id);
+              if (error) throw error;
+            }
+          } catch (err) {
+            console.error(`Failed to online sync category ${action}, queuing:`, err);
+            await SyncService.addToQueue({
+              table: 'categories',
+              action,
+              data: payload
+            });
+            await refreshPendingCount();
+          }
+        } else {
+          // Offline: queue update
+          await SyncService.addToQueue({
+            table: 'categories',
+            action,
+            data: payload
+          });
+          await refreshPendingCount();
+        }
+      }
+
+      // Process deleted items
+      for (const item of deleted) {
+        // Delete from IndexedDB
+        await OfflineDB.deleteById('categories', item.id);
+
+        if (navigator.onLine) {
+          try {
+            const { error } = await supabase
+              .from('categories')
+              .delete()
+              .eq('id', item.id)
+              .eq('user_id', user.id);
+            if (error) throw error;
+          } catch (err) {
+            console.error('Failed to online delete category, queuing:', err);
+            await SyncService.addToQueue({
+              table: 'categories',
+              action: 'DELETE',
+              data: { id: item.id, user_id: user.id }
+            });
+            await refreshPendingCount();
+          }
+        } else {
+          // Offline: queue delete
+          await SyncService.addToQueue({
+            table: 'categories',
+            action: 'DELETE',
+            data: { id: item.id, user_id: user.id }
+          });
+          await refreshPendingCount();
+        }
+      }
+    }
+
+    // If a category was renamed, update all associated transactions and budgets
+    if (renameMap && user) {
+      const { oldName, newName } = renameMap;
+
+      // 1. Cascade update transactions local state
+      setTransactions(prev => prev.map(t => 
+        t.category === oldName ? { ...t, category: newName } : t
+      ));
+
+      // Cascade update transactions in local IndexedDB cache
+      try {
+        const cachedTxs = await OfflineDB.getAll<Transaction>('transactions');
+        const updatedCachedTxs = cachedTxs.map(t => 
+          t.category === oldName ? { ...t, category: newName } : t
+        );
+        await OfflineDB.clearStore('transactions');
+        await OfflineDB.putAll('transactions', updatedCachedTxs);
+
+        // Cascade update in Supabase / queue if offline
+        if (navigator.onLine) {
+          const { error } = await supabase
+            .from('transactions')
+            .update({ category: newName })
+            .eq('category', oldName)
+            .eq('user_id', user.id);
+          if (error) throw error;
+        } else {
+          // Offline: queue updates for affected transactions
+          const affected = cachedTxs.filter(t => t.category === oldName);
+          for (const tx of affected) {
+            await SyncService.addToQueue({
+              table: 'transactions',
+              action: 'UPDATE',
+              data: { id: tx.id, user_id: user.id, category: newName }
+            });
+          }
+          await refreshPendingCount();
+        }
+      } catch (err) {
+        console.error('Failed to cascade update transaction categories:', err);
+      }
+
+      // 2. Cascade update budgets local state
+      setBudgets(prev => prev.map(b => 
+        b.category === oldName ? { ...b, category: newName } : b
+      ));
+
+      // Cascade update budgets in local IndexedDB cache
+      try {
+        const cachedBudgets = await OfflineDB.getAll<Budget>('budgets');
+        const updatedCachedBudgets = cachedBudgets.map(b => 
+          b.category === oldName ? { ...b, category: newName } : b
+        );
+        await OfflineDB.clearStore('budgets');
+        await OfflineDB.putAll('budgets', updatedCachedBudgets);
+
+        // Cascade update budgets in Supabase / queue if offline
+        if (navigator.onLine) {
+          const { error } = await supabase
+            .from('budgets')
+            .update({ category: newName })
+            .eq('category', oldName)
+            .eq('user_id', user.id);
+          if (error) throw error;
+        } else {
+          // Offline: queue updates for affected budgets
+          const affected = cachedBudgets.filter(b => b.category === oldName);
+          for (const b of affected) {
+            await SyncService.addToQueue({
+              table: 'budgets',
+              action: 'UPDATE',
+              data: { id: b.id, user_id: user.id, category: newName }
+            });
+          }
+          await refreshPendingCount();
+        }
+      } catch (err) {
+        console.error('Failed to cascade update budget categories:', err);
+      }
+    }
+  }, [user, categories, refreshPendingCount]);
 
   // Keep ref in sync for the sync handler
   loadTransactionsRef.current = loadTransactions;
 
-  // Load transactions when user is authenticated
+  // Load transactions and categories when user is authenticated
   useEffect(() => {
     if (user) {
+      loadCategories();
       loadTransactions();
       refreshPendingCount();
+    } else {
+      setCategories(DEFAULT_CATEGORIES);
     }
-  }, [user, loadTransactions, refreshPendingCount]);
+  }, [user, loadCategories, loadTransactions, refreshPendingCount]);
 
   // Reschedule all notifications when data changes
   useEffect(() => {
@@ -283,7 +548,7 @@ const App: React.FC = () => {
             // Run auto categorization on the new transaction
             let category = newTx.category;
             if (category === 'Chuyển khoản đi' || category === 'Chuyển khoản nhận' || category === 'Khác') {
-              const autoCat = autoCategorize(newTx.description);
+              const autoCat = autoCategorize(newTx.description, categories);
               if (autoCat && autoCat.type === newTx.type) {
                 category = autoCat.category;
                 // Update Supabase and IndexedDB in background
@@ -303,7 +568,7 @@ const App: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [user, categories]);
 
   // Clean up old localStorage data (migrated to Supabase/IndexedDB)
   useEffect(() => {
@@ -1235,6 +1500,7 @@ const App: React.FC = () => {
               setFilterMonth(yearMonth);
               setCurrentView('transactions');
             }}
+            categories={categories}
           />
         )}
 
@@ -1798,6 +2064,8 @@ const App: React.FC = () => {
         <TransactionForm
           onAdd={handleAddTransaction}
           onClose={() => setIsFormOpen(false)}
+          categories={categories}
+          onOpenCategoryMgmt={() => setIsCategoryMgmtOpen(true)}
         />
       )}
 
@@ -1807,6 +2075,8 @@ const App: React.FC = () => {
           budgets={budgets}
           onSave={handleSaveBudgets}
           onClose={() => setIsBudgetModalOpen(false)}
+          categories={categories}
+          onOpenCategoryMgmt={() => setIsCategoryMgmtOpen(true)}
         />
       )}
 
@@ -1817,6 +2087,18 @@ const App: React.FC = () => {
           onClose={() => setSelectedTransaction(null)}
           onDelete={handleDeleteTransaction}
           onUpdateTransaction={handleUpdateTransaction}
+          categories={categories}
+        />
+      )}
+
+      {/* Category Management Modal */}
+      {isCategoryMgmtOpen && (
+        <CategoryModal
+          categories={categories}
+          transactions={transactions}
+          budgets={budgets}
+          onCategoriesChange={handleCategoriesChange}
+          onClose={() => setIsCategoryMgmtOpen(false)}
         />
       )}
 

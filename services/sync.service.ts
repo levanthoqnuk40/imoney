@@ -8,7 +8,7 @@ import * as OfflineDB from './offline.service';
 
 export interface SyncQueueItem {
     id: string;
-    table: 'transactions' | 'debts' | 'debt_payments' | 'gift_records' | 'budgets';
+    table: 'transactions' | 'debts' | 'debt_payments' | 'gift_records' | 'budgets' | 'categories';
     action: 'INSERT' | 'UPDATE' | 'DELETE';
     data: Record<string, any>;
     /** base64 receipt data to upload when online */

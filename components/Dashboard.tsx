@@ -1,7 +1,7 @@
 
 import React, { useMemo } from 'react';
-import { Transaction, Budget } from '../types';
-import { EXPENSE_CATEGORIES, COLORS, CATEGORY_ICONS } from '../constants';
+import { Transaction, Budget, Category } from '../types';
+import { COLORS } from '../constants';
 import BudgetCard from './BudgetCard';
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, AreaChart, Area, BarChart, Bar, LabelList } from 'recharts';
 
@@ -10,11 +10,10 @@ interface DashboardProps {
     budgets: Budget[];
     onEditBudget: () => void;
     onMonthClick?: (yearMonth: string) => void;
+    categories: Category[];
 }
 
-// CATEGORY_ICONS is now imported from constants.tsx
-
-const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudget, onMonthClick }) => {
+const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudget, onMonthClick, categories }) => {
     // Get current month transactions
     const { currentMonth, currentYear } = useMemo(() => ({
         currentMonth: new Date().getMonth(),
@@ -137,9 +136,15 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
         let needsActual = 0;
         let wantsActual = 0;
         
+        // Track category names that are classified as "Needs" based on default system IDs
+        const needCategoryIds = ['cat_nhao', 'cat_anuong', 'cat_dichuyen', 'cat_suckhoe', 'cat_giaoduc'];
+        const needCategoryNames = categories
+            .filter(c => needCategoryIds.includes(c.id))
+            .map(c => c.name);
+        
         monthlyTransactions.forEach(t => {
             if (t.type === 'EXPENSE') {
-                if (['Nhà ở', 'Ăn uống', 'Di chuyển', 'Sức khỏe', 'Giáo dục'].includes(t.category)) {
+                if (needCategoryNames.includes(t.category)) {
                     needsActual += t.amount;
                 } else {
                     wantsActual += t.amount;
@@ -440,7 +445,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                                 category={budget.category}
                                 spent={categorySpending[budget.category] || 0}
                                 limit={budget.limit}
-                                icon={CATEGORY_ICONS[budget.category] || '📦'}
+                                icon={categories.find(c => c.name === budget.category)?.icon || '📦'}
                             />
                         ))}
                     </div>
@@ -532,7 +537,7 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, budgets, onEditBudg
                     <div className="space-y-3">
                         {pieData.slice(0, 5).map((cat, idx) => (
                             <div key={cat.name} className="flex items-center gap-3">
-                                <span className="text-xl">{CATEGORY_ICONS[cat.name] || '📦'}</span>
+                                <span className="text-xl">{categories.find(c => c.name === cat.name)?.icon || '📦'}</span>
                                 <div className="flex-1 min-w-0">
                                     <div className="flex justify-between items-center mb-1">
                                         <span className="font-medium text-gray-800 text-sm truncate">{cat.name}</span>

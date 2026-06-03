@@ -1,16 +1,16 @@
 
 import React, { useState } from 'react';
-import { Transaction } from '../types';
-import { CATEGORY_ICONS, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../constants';
+import { Transaction, Category } from '../types';
 
 interface TransactionDetailProps {
     transaction: Transaction;
     onClose: () => void;
     onDelete: (id: string) => void;
     onUpdateTransaction: (id: string, description: string, category?: string) => Promise<void>;
+    categories: Category[];
 }
 
-const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onClose, onDelete, onUpdateTransaction }) => {
+const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onClose, onDelete, onUpdateTransaction, categories }) => {
     const [isEditing, setIsEditing] = useState(false);
     const [editedDescription, setEditedDescription] = useState(transaction.description || '');
     const [editedCategory, setEditedCategory] = useState(transaction.category);
@@ -85,13 +85,17 @@ const TransactionDetail: React.FC<TransactionDetailProps> = ({ transaction, onCl
                                     onChange={(e) => setEditedCategory(e.target.value)}
                                     className="px-3 py-1.5 border border-gray-200 rounded-lg text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent bg-white"
                                 >
-                                    {(transaction.type === 'INCOME' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).map(cat => (
-                                        <option key={cat} value={cat}>{cat}</option>
-                                    ))}
+                                    {categories
+                                        .filter(c => c.type === transaction.type)
+                                        .map(cat => (
+                                            <option key={cat.id} value={cat.name}>
+                                                {cat.icon} {cat.name}
+                                            </option>
+                                        ))}
                                 </select>
                             ) : (
                                 <span className="font-medium text-gray-800 flex items-center gap-2">
-                                    <span>{CATEGORY_ICONS[transaction.category] || '📦'}</span>
+                                    <span>{categories.find(c => c.name === transaction.category)?.icon || '📦'}</span>
                                     {transaction.category}
                                 </span>
                             )}

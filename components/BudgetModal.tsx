@@ -1,17 +1,16 @@
 
 import React, { useState } from 'react';
-import { Budget } from '../types';
-import { EXPENSE_CATEGORIES, CATEGORY_ICONS } from '../constants';
+import { Budget, Category } from '../types';
 
 interface BudgetModalProps {
     budgets: Budget[];
     onSave: (budgets: Budget[]) => void;
     onClose: () => void;
+    categories: Category[];
+    onOpenCategoryMgmt: () => void;
 }
 
-// CATEGORY_ICONS is now imported from constants.tsx
-
-const BudgetModal: React.FC<BudgetModalProps> = ({ budgets, onSave, onClose }) => {
+const BudgetModal: React.FC<BudgetModalProps> = ({ budgets, onSave, onClose, categories, onOpenCategoryMgmt }) => {
     const [localBudgets, setLocalBudgets] = useState<Record<string, string>>(() => {
         const initial: Record<string, string> = {};
         budgets.forEach(b => {
@@ -45,6 +44,8 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ budgets, onSave, onClose }) =
         onClose();
     };
 
+    const expenseCategories = categories.filter(c => c.type === 'EXPENSE');
+
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center modal-overlay">
             <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg overflow-hidden modal-content modal-fullscreen-mobile sm:max-h-[90vh]">
@@ -62,21 +63,30 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ budgets, onSave, onClose }) =
                 </div>
 
                 <div className="p-4 sm:p-6 space-y-4 overflow-y-auto max-h-[60vh] sm:max-h-[50vh]">
-                    <p className="text-sm text-gray-600 mb-4">
-                        Nhập số tiền ngân sách cho mỗi danh mục. Để trống nếu không muốn theo dõi.
-                    </p>
+                    <div className="flex justify-between items-start mb-4 gap-2">
+                        <p className="text-sm text-gray-600 leading-normal">
+                            Nhập số tiền ngân sách cho mỗi danh mục. Để trống nếu không muốn theo dõi.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={onOpenCategoryMgmt}
+                            className="text-xs text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-1 border border-blue-200 px-2.5 py-1.5 rounded-lg bg-blue-50/50 hover:bg-blue-50 transition-colors flex-shrink-0 touch-target"
+                        >
+                            ⚙️ Quản lý
+                        </button>
+                    </div>
 
-                    {EXPENSE_CATEGORIES.map(category => (
-                        <div key={category} className="flex items-center gap-3">
-                            <span className="text-2xl w-10 text-center">{CATEGORY_ICONS[category]}</span>
+                    {expenseCategories.map(cat => (
+                        <div key={cat.id} className="flex items-center gap-3">
+                            <span className="text-2xl w-10 text-center">{cat.icon}</span>
                             <div className="flex-1">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">{category}</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">{cat.name}</label>
                                 <div className="relative">
                                     <input
                                         type="number"
                                         inputMode="numeric"
-                                        value={localBudgets[category] || ''}
-                                        onChange={(e) => handleChange(category, e.target.value)}
+                                        value={localBudgets[cat.name] || ''}
+                                        onChange={(e) => handleChange(cat.name, e.target.value)}
                                         placeholder="0"
                                         className="w-full px-4 py-3 sm:py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-base pr-16"
                                     />

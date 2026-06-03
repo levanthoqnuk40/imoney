@@ -1,18 +1,23 @@
 
 import React, { useState, useRef } from 'react';
-import { Transaction, TransactionType } from '../types';
-import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, autoCategorize } from '../constants';
+import { Transaction, TransactionType, Category } from '../types';
+import { autoCategorize } from '../constants';
 import { StorageService } from '../services/supabase.service';
 
 interface TransactionFormProps {
   onAdd: (transaction: Omit<Transaction, 'id'>) => void;
   onClose: () => void;
+  categories: Category[];
+  onOpenCategoryMgmt: () => void;
 }
 
-const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => {
+const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose, categories, onOpenCategoryMgmt }) => {
   const [type, setType] = useState<TransactionType>('EXPENSE');
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
+  const [category, setCategory] = useState(() => {
+    const expenseCats = categories.filter(c => c.type === 'EXPENSE');
+    return expenseCats[0]?.name || 'Khác';
+  });
   const [description, setDescription] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -23,7 +28,7 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
   const handleDescriptionChange = (val: string) => {
     setDescription(val);
     if (!hasManuallySelected && val.trim().length > 1) {
-      const result = autoCategorize(val);
+      const result = autoCategorize(val, categories);
       if (result) {
         setType(result.type);
         setCategory(result.category);
@@ -124,7 +129,11 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
           <div className="flex bg-gray-100 p-1 rounded-xl">
             <button
               type="button"
-              onClick={() => { setType('EXPENSE'); setCategory(EXPENSE_CATEGORIES[0]); setHasManuallySelected(true); }}
+              onClick={() => {
+                setType('EXPENSE');
+                setCategory(categories.filter(c => c.type === 'EXPENSE')[0]?.name || 'Khác');
+                setHasManuallySelected(true);
+              }}
               className={`flex-1 py-3 sm:py-2 text-sm font-medium rounded-lg transition-all touch-target ${type === 'EXPENSE' ? 'bg-white text-rose-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                 }`}
             >
@@ -132,7 +141,11 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
             </button>
             <button
               type="button"
-              onClick={() => { setType('INCOME'); setCategory(INCOME_CATEGORIES[0]); setHasManuallySelected(true); }}
+              onClick={() => {
+                setType('INCOME');
+                setCategory(categories.filter(c => c.type === 'INCOME')[0]?.name || 'Khác');
+                setHasManuallySelected(true);
+              }}
               className={`flex-1 py-3 sm:py-2 text-sm font-medium rounded-lg transition-all touch-target ${type === 'INCOME' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                 }`}
             >
@@ -162,15 +175,36 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
           {/* Category */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Danh mục</label>
-            <select
-              value={category}
-              onChange={(e) => { setCategory(e.target.value); setHasManuallySelected(true); }}
-              className="w-full px-4 py-3 sm:py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-base appearance-none bg-white"
-            >
-              {(type === 'EXPENSE' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES).map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <select
+                  value={category}
+                  onChange={(e) => { setCategory(e.target.value); setHasManuallySelected(true); }}
+                  className="w-full px-4 py-3 sm:py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-base appearance-none bg-white pr-10"
+                >
+                  {categories
+                    .filter(c => c.type === type)
+                    .map(cat => (
+                      <option key={cat.id} value={cat.name}>
+                        {cat.icon} {cat.name}
+                      </option>
+                    ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
+                  <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                  </svg>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenCategoryMgmt}
+                className="px-3 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors flex items-center justify-center text-lg touch-target"
+                title="Quản lý danh mục"
+              >
+                ⚙️
+              </button>
+            </div>
           </div>
 
           {/* Date */}
@@ -196,9 +230,9 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onAdd, onClose }) => 
               placeholder="VD: Mua cafe sáng"
             />
             {/* Auto-categorization alert badge */}
-            {!hasManuallySelected && description.trim().length > 1 && autoCategorize(description) && (
+            {!hasManuallySelected && description.trim().length > 1 && autoCategorize(description, categories) && (
               <p className="text-xs text-blue-600 mt-1.5 flex items-center gap-1 animate-pulse">
-                <span>💡</span> Tự động nhận diện danh mục: <strong className="text-blue-700 font-bold">{autoCategorize(description)?.category}</strong>
+                <span>💡</span> Tự động nhận diện danh mục: <strong className="text-blue-700 font-bold">{autoCategorize(description, categories)?.category}</strong>
               </p>
             )}
           </div>
