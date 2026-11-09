@@ -406,7 +406,8 @@ export const SharedExpenseDetail: React.FC<SharedExpenseDetailProps> = ({
                       {/* Inline VietQR Code Panel */}
                       {activeParticipantForQR === participant.id && !showBankConfig && (
                         <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col items-center space-y-3 animate-fade-in text-center">
-                          <p className="font-bold text-gray-700 text-xs flex items-center gap-1">📸 Mã VietQR chuyển tiền tự động</p>
+                          <p className="font-bold text-gray-700 text-xs flex items-center gap-1">📸 Mã VietQR chuyển khoản</p>
+                          <p className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg p-2">Khi người trả giữ nguyên nội dung <strong>IMN CH…</strong>, giao dịch tiền vào sẽ được SePay tự ghi nhận. Màn hình cập nhật sau vài giây.</p>
                           
                           {!bankInfo ? (
                             <div className="space-y-2 w-full">

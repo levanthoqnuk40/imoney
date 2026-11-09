@@ -22,6 +22,17 @@ export const SharedExpensesList: React.FC<SharedExpensesListProps> = ({
   onOpenCreateForm
 }) => {
   const [activeTab, setActiveTab] = useState<FilterTab>('pending');
+  const [shareEvent, setShareEvent] = useState<ExpenseEvent | null>(null);
+  const [shareUrl, setShareUrl] = useState('');
+
+  const createShareLink = (event: ExpenseEvent) => {
+    // Bearer link contains only the selected expense summary; no account or other financial data.
+    const eventParticipants = participants.filter(p => p.event_id === event.id).map(p => ({ name: p.display_name, owner: p.is_owner }));
+    const payload = btoa(unescape(encodeURIComponent(JSON.stringify({ title: event.title, date: event.event_date, amount: event.total_amount, note: event.note || '', participants: eventParticipants }))));
+    const url = `${window.location.origin}${window.location.pathname}#/share/${payload}`;
+    setShareEvent(event);
+    setShareUrl(url);
+  };
 
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
@@ -226,7 +237,6 @@ export const SharedExpensesList: React.FC<SharedExpensesListProps> = ({
               return (
                 <div
                   key={event.id}
-                  onClick={() => onSelectEvent(event)}
                   className={`card p-4 cursor-pointer hover:shadow-md transition-all border-l-4 ${
                     progress.isFullySettled
                       ? 'border-l-emerald-500 bg-emerald-50/10'
@@ -238,7 +248,7 @@ export const SharedExpensesList: React.FC<SharedExpensesListProps> = ({
                   {/* Title & Status */}
                   <div className="flex justify-between items-start gap-2 mb-2">
                     <div className="min-w-0 flex-1">
-                      <h4 className="font-bold text-gray-800 text-base truncate">{event.title}</h4>
+                      <h4 onClick={() => onSelectEvent(event)} className="font-bold text-gray-800 text-base truncate cursor-pointer">{event.title}</h4>
                       <p className="text-[11px] text-gray-400">
                         {new Date(event.event_date).toLocaleDateString('vi-VN')}
                       </p>
@@ -288,6 +298,7 @@ export const SharedExpensesList: React.FC<SharedExpensesListProps> = ({
                       />
                     </div>
                   </div>
+                  <button type="button" onClick={() => createShareLink(event)} className="mt-3 w-full rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100">🔗 Chia sẻ khoản chi</button>
                 </div>
               );
             })}
@@ -317,6 +328,20 @@ export const SharedExpensesList: React.FC<SharedExpensesListProps> = ({
           </div>
         )}
       </div>
+      {shareEvent && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4" onClick={() => setShareEvent(null)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-3" onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-gray-800">Chia sẻ khoản chi</h3>
+            <p className="text-xs text-gray-500">Người có liên kết xem được thông tin khoản chi và hướng dẫn chuyển tiền.</p>
+            <input readOnly value={shareUrl} className="w-full border rounded-lg p-2 text-xs" />
+            <div className="flex gap-2">
+              <button onClick={() => { navigator.clipboard.writeText(shareUrl); }} className="flex-1 rounded-lg bg-blue-600 text-white py-2 text-sm font-semibold">Sao chép liên kết</button>
+              <a href={`https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(shareUrl)}`} download={`qr-${shareEvent.id}.png`} target="_blank" rel="noreferrer" className="flex-1 rounded-lg bg-emerald-600 text-white py-2 text-center text-sm font-semibold">Tải mã QR</a>
+            </div>
+            <button onClick={() => setShareEvent(null)} className="w-full py-1 text-sm text-gray-500">Đóng</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
