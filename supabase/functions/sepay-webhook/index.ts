@@ -99,7 +99,8 @@ Deno.serve(async (req: Request) => {
         const resolvedTransferType = transferType ||
             (body.creditAmount && parseFloat(body.creditAmount) > 0 ? 'in' : 'out')
 
-        // Insert – unique constraint on sepay_id sẽ chặn duplicate
+        // Lưu giao dịch gốc. SePay có thể gửi lại cùng một webhook, vì vậy giao dịch
+        // trùng vẫn phải đi tiếp tới bước đối soát để có thể khôi phục lần xử lý dở dang.
         const { data, error } = await supabase
             .from('sepay_transactions')
             .insert({
@@ -118,23 +119,19 @@ Deno.serve(async (req: Request) => {
             .single()
 
         if (error) {
-            // Duplicate – Sepay gửi lại
-            if (error.code === '23505') {
-                console.log('Duplicate transaction ignored:', id)
+            if (error.code !== '23505') {
+                console.error('Supabase insert error:', error)
                 return new Response(
-                    JSON.stringify({ success: true, message: 'Transaction already processed' }),
-                    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                    JSON.stringify({ success: false, message: error.message }),
+                    { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
                 )
             }
-
-            console.error('Supabase insert error:', error)
-            return new Response(
-                JSON.stringify({ success: false, message: error.message }),
-                { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            )
+            console.log('Duplicate transaction; retrying reconciliation:', id)
         }
 
-        console.log('Transaction saved successfully:', data.id)
+        if (!error) {
+            console.log('Transaction saved successfully:', data.id)
+        }
 
         // ============================================
         // 4. Tự động ghi nhận Hoàn trả chi hộ qua VietQR
@@ -142,33 +139,40 @@ Deno.serve(async (req: Request) => {
         try {
             const descriptionText = content || description || ''
             const match = descriptionText.match(/IMN\s*CH\s*([a-f0-9]{5})([a-f0-9]{5})/i)
-            if (match) {
+            const amount = parseFloat(String(transferAmount))
+            const isIncoming = String(resolvedTransferType).toLowerCase() === 'in'
+            if (match && isIncoming && Number.isFinite(amount) && amount > 0) {
                 const eventShort = match[1].toLowerCase()
                 const participantShort = match[2].toLowerCase()
                 console.log(`Found VietQR code matching event: ${eventShort}, participant: ${participantShort}`)
 
-                // Tìm sự kiện chi hộ có UUID kết thúc bằng eventShort
+                // Không dùng PostgREST cast (`id::text`) vì nhiều cấu hình Supabase
+                // không hỗ trợ filter đó. Đối chiếu hậu tố UUID tại đây cho kết quả ổn định.
                 const { data: events, error: eventErr } = await supabase
                     .from('expense_events')
                     .select('id, user_id, status')
-                    .filter('id::text', 'like', `%${eventShort}`)
+                const event = events?.find(e => e.id.toLowerCase().endsWith(eventShort))
 
-                if (!eventErr && events && events.length > 0) {
-                    const event = events[0]
+                if (!eventErr && event) {
                     
                     // Tìm thành viên tham gia có UUID kết thúc bằng participantShort
                     const { data: participants, error: partErr } = await supabase
                         .from('expense_participants')
                         .select('id, display_name')
                         .eq('event_id', event.id)
-                        .filter('id::text', 'like', `%${participantShort}`)
+                    const participant = participants?.find(p => p.id.toLowerCase().endsWith(participantShort))
 
-                    if (!partErr && participants && participants.length > 0) {
-                        const participant = participants[0]
-                        const amount = parseFloat(String(transferAmount))
+                    if (!partErr && participant) {
+                        // reference_no là khóa idempotency của khoản hoàn trả. Nếu lần trước
+                        // đã tạo rồi thì webhook gửi lại không thể cộng tiền lần hai.
+                        const { data: existingRepayment, error: existingErr } = await supabase
+                            .from('repayments')
+                            .select('id')
+                            .eq('reference_no', String(id))
+                            .maybeSingle()
+                        if (existingErr) throw existingErr
 
-                        // Thêm bản ghi hoàn trả
-                        const { error: repayErr } = await supabase
+                        const { error: repayErr } = existingRepayment ? { error: null } : await supabase
                             .from('repayments')
                             .insert({
                                 event_id: event.id,
@@ -176,7 +180,7 @@ Deno.serve(async (req: Request) => {
                                 repayment_date: parsedDate ? parsedDate.split('T')[0] : new Date().toISOString().split('T')[0],
                                 amount: amount,
                                 payment_method: 'transfer',
-                                reference_no: referenceCode || id,
+                                reference_no: String(id),
                                 note: `Tự động ghi nhận qua VietQR (Sepay: ${id})`
                             })
 
@@ -188,12 +192,12 @@ Deno.serve(async (req: Request) => {
                             // Cập nhật trạng thái sự kiện dựa trên tổng dư nợ còn lại
                             const { data: splits } = await supabase
                                 .from('expense_splits')
-                                .select('amount_due')
+                                .select('participant_id, amount_due')
                                 .eq('event_id', event.id)
 
                             const { data: repayments } = await supabase
                                 .from('repayments')
-                                .select('amount')
+                                .select('participant_id, amount')
                                 .eq('event_id', event.id)
 
                             if (splits && repayments) {
@@ -236,6 +240,8 @@ Deno.serve(async (req: Request) => {
                 } else {
                     console.warn(`Event not found matching short code: ${eventShort}`)
                 }
+            } else if (match) {
+                console.warn(`Ignored invalid shared-expense payment ${id}: transfer type=${resolvedTransferType}, amount=${transferAmount}`)
             }
         } catch (repayCatch) {
             console.error('Error during auto-repayment processing:', repayCatch)
