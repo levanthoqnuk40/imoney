@@ -162,6 +162,11 @@ const App: React.FC = () => {
   }, [isNotificationPanelOpen]);
 
   // Show loading while checking auth
+  const sharedHash = window.location.hash.match(/^#\/share\/([^?]+)/);
+  if (sharedHash) {
+    return <SharedExpensePublicPage payload={sharedHash[1]} />;
+  }
+
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
@@ -1350,6 +1355,13 @@ const App: React.FC = () => {
       )}
     </div>
   );
+};
+
+const SharedExpensePublicPage: React.FC<{ payload: string }> = ({ payload }) => {
+  let item: { title: string; date: string; amount: number; note?: string; participants?: { name: string; owner: boolean }[] } | null = null;
+  try { item = JSON.parse(decodeURIComponent(escape(atob(payload)))); } catch { /* invalid or edited link */ }
+  if (!item) return <main className="min-h-screen grid place-items-center p-6"><div className="card p-6 text-center"><h1 className="font-bold text-lg">Liên kết không hợp lệ</h1><p className="text-sm text-gray-500 mt-2">Hãy nhờ người chia sẻ gửi lại liên kết.</p></div></main>;
+  return <main className="min-h-screen bg-slate-50 p-4 sm:p-8"><article className="card max-w-lg mx-auto p-6 space-y-4"><p className="text-xs font-bold uppercase tracking-wider text-blue-600">Khoản chi được chia sẻ</p><h1 className="text-2xl font-black text-gray-800">{item.title}</h1><p className="text-sm text-gray-500">Ngày chi: {new Date(item.date).toLocaleDateString('vi-VN')}</p><div className="rounded-xl bg-blue-50 p-4"><p className="text-xs text-blue-700">Tổng khoản chi</p><p className="text-2xl font-black text-blue-800">{Number(item.amount).toLocaleString('vi-VN')}đ</p></div>{item.note && <p className="text-sm text-gray-700">{item.note}</p>}<div><h2 className="font-bold text-sm mb-2">Thành viên</h2><ul className="space-y-1 text-sm text-gray-600">{item.participants?.map((p, i) => <li key={i}>{p.name}{p.owner ? ' (người chi hộ)' : ''}</li>)}</ul></div><p className="text-xs text-gray-400">Liên hệ người gửi liên kết để xác nhận số tiền và nhận thông tin chuyển khoản.</p></article></main>;
 };
 
 // Tip Item Component – uses static class map to avoid Tailwind purge issues
