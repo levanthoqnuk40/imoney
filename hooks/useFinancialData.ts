@@ -833,6 +833,27 @@ export function useFinancialData(user: User | null) {
     };
   }, [user, categories]);
 
+  // A SePay webhook writes repayments directly with the service role. Reload the
+  // shared-expense data when that row arrives so an open detail view reflects it.
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('shared-expense-repayments-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'repayments' },
+        () => {
+          loadExpenseDataRef.current?.().catch(err => console.error('Error reloading auto repayment:', err));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
   // Actions
   const handleAddTransaction = useCallback(async (newTx: Omit<Transaction, 'id'>) => {
     if (!user) return;
