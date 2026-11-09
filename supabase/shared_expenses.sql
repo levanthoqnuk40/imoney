@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS public.repayments (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
+-- Một webhook SePay chỉ được phép tạo một khoản hoàn trả. `reference_no` của
+-- khoản tự động được lưu bằng chính SePay transaction id.
+CREATE UNIQUE INDEX IF NOT EXISTS repayments_sepay_reference_unique
+ON public.repayments (reference_no)
+WHERE payment_method = 'transfer' AND reference_no IS NOT NULL;
+
 -- RLS Policies
 ALTER TABLE public.expense_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.expense_participants ENABLE ROW LEVEL SECURITY;
